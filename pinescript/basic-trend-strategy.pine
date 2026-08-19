@@ -1,0 +1,95 @@
+//@version=5
+// ============================================================================
+// Basic Trend-Following Strategy — starting scaffold for backtesting in the
+// TradingView Strategy Tester. Deliberately simple: EMA-crossover trend
+// direction, ATR-based stop/target, optional date-range filter.
+//
+// This is NOT the full midnight-deviation/ICT model documented in
+// ../knowledge/ — it's a working baseline to backtest and iterate from,
+// per the 2026-08-19 decision to build something codeable first and layer
+// the discretionary confluences on top later. See
+// ../knowledge/model-overview.md "2026-08-19 — pivot to a codeable baseline
+// first" for context.
+//
+// Everything below is an input so you can tune it directly in the Strategy
+// Tester's "Settings" panel without touching code.
+// ============================================================================
+strategy(
+     "Basic Trend Strategy (MNQ/NQ starter)",
+     overlay = true,
+     initial_capital = 10000,
+     default_qty_type = strategy.fixed,
+     default_qty_value = 1,
+     commission_type = strategy.commission.cash_per_contract,
+     commission_value = 0.5,      // rough placeholder commission per contract, adjust to your broker
+     slippage = 1)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+grpTrend = "Trend (EMA crossover)"
+fastLen  = input.int(21, "Fast EMA length", minval = 1, group = grpTrend)
+slowLen  = input.int(55, "Slow EMA length", minval = 1, group = grpTrend)
+
+grpRisk  = "Risk (ATR-based stop/target)"
+atrLen   = input.int(14, "ATR length", minval = 1, group = grpRisk)
+stopMult = input.float(2.0, "Stop = ATR x", minval = 0.1, step = 0.1, group = grpRisk)
+tpMult   = input.float(4.0, "Target = ATR x", minval = 0.1, step = 0.1, group = grpRisk)
+
+grpDir   = "Direction"
+allowLong  = input.bool(true, "Allow long trades", group = grpDir)
+allowShort = input.bool(true, "Allow short trades", group = grpDir)
+
+grpDate  = "Backtest window (optional)"
+useDateFilter = input.bool(false, "Limit backtest to date range below", group = grpDate)
+startDate     = input.time(timestamp("2024-01-01T00:00:00"), "Start", group = grpDate)
+endDate       = input.time(timestamp("2026-12-31T00:00:00"), "End", group = grpDate)
+
+// ---------------------------------------------------------------------------
+// Trend
+// ---------------------------------------------------------------------------
+fastEMA = ta.ema(close, fastLen)
+slowEMA = ta.ema(close, slowLen)
+
+bullTrend = fastEMA > slowEMA
+bearTrend = fastEMA < slowEMA
+
+longSignal  = ta.crossover(fastEMA, slowEMA)
+shortSignal = ta.crossunder(fastEMA, slowEMA)
+
+plot(fastEMA, "Fast EMA", color = color.new(color.teal, 0))
+plot(slowEMA, "Slow EMA", color = color.new(color.orange, 0))
+
+// ---------------------------------------------------------------------------
+// Risk (ATR stop/target, computed at entry and held fixed for that trade)
+// ---------------------------------------------------------------------------
+atrVal = ta.atr(atrLen)
+
+inDateWindow = not useDateFilter or (time >= startDate and time <= endDate)
+
+// ---------------------------------------------------------------------------
+// Entries
+// ---------------------------------------------------------------------------
+if inDateWindow and allowLong and longSignal
+    strategy.entry("Long", strategy.long)
+
+if inDateWindow and allowShort and shortSignal
+    strategy.entry("Short", strategy.short)
+
+// ---------------------------------------------------------------------------
+// Exits — ATR stop/target off the average entry price of the open position
+// ---------------------------------------------------------------------------
+if strategy.position_size > 0
+    longStop = strategy.position_avg_price - atrVal * stopMult
+    longTP   = strategy.position_avg_price + atrVal * tpMult
+    strategy.exit("Long Exit", "Long", stop = longStop, limit = longTP)
+
+if strategy.position_size < 0
+    shortStop = strategy.position_avg_price + atrVal * stopMult
+    shortTP   = strategy.position_avg_price - atrVal * tpMult
+    strategy.exit("Short Exit", "Short", stop = shortStop, limit = shortTP)
+
+// ---------------------------------------------------------------------------
+// Visual aid: background tint for current trend direction
+// ---------------------------------------------------------------------------
+bgcolor(bullTrend ? color.new(color.green, 92) : bearTrend ? color.new(color.red, 92) : na)

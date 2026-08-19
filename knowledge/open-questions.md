@@ -7,17 +7,17 @@ check them off here.
 
 ## Midnight Deviation
 
-- [ ] Exact timezone/session definition for "00:00" — you've said UTC, also Georgia/US, also
-      "maybe Asia session open." Need the actual precise rule (e.g. "00:00 New York time" or
-      "00:00 UTC" specifically) since Pine Script needs an exact `timestamp()`/session string.
-- [ ] Does the bullish-candle-first mirror case (bullish 00:00 candle → bearish follow-through)
-      work identically to the documented bearish→bullish case, just flipped?
-- [ ] Trend-day variant: when a trend is already running through midnight instead of
-      chopping/reversing, what changes about how the deviation gets marked?
-- [ ] When do you use Method A (candle-run) vs. Method B (manipulation leg)? Is there a rule, or
-      is it always discretionary which one applies on a given day?
-- [ ] How do you actually identify a "manipulation leg" (Method B) — any objective marker, or
-      pure feel?
+- [x] Exact timezone/session — **00:00 UTC-4 (New York time), 24-hour session.** Locked in.
+- [x] Bullish-candle-first mirror case — **confirmed identical, just flipped.**
+- [x] Trend-day variant — **resolved: trade normally through midnight; if price "ignores the 5"
+      (blows through the deviation without reacting), draw a new deviation off the resulting
+      swing using Method B.** Not a separate marking algorithm.
+- [x] Method A vs. Method B choice — **confirmed: "generally feel," no fixed rule** beyond the
+      trend-day fallback case above.
+- [~] How to identify a manipulation leg (Method B) — **tentative answer: "top to bottom of that
+      individual candle" (trader's own hedge: "I think")** — possibly just one candle's full
+      range rather than a multi-candle swing structure. Needs a worked chart example to firm up;
+      not yet fully confirmed.
 - [ ] Per-level weight within the 16-level ladder — is every level in the pullback band (1 to
       -2.5) equally likely, or is there a hierarchy inside that band too? Same question for the
       reversion band (-3 to -5).

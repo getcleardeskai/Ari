@@ -7,10 +7,9 @@ How the midnight deviation level/zone is actually drawn. This is the anchor refe
 ## Setup
 
 - Timeframe used for marking: **5-minute chart** — explicitly not the 1m or 10m.
-- Reference clock: midnight, i.e. 00:00. Exact session/timezone convention is still unconfirmed
-  (see "Open questions" below) — working assumption for now is the trader's local reference point
-  around 00:00, likely UTC-aligned, possibly the Asia session open. **Do not hard-code a timezone
-  in Pine Script until this is confirmed.**
+- Reference clock: **00:00, UTC-4 (New York time), on a 24-hour session.** Confirmed 2026-08-19 —
+  this is now locked in and safe to hard-code in Pine Script (`timezone="America/New_York"`,
+  midnight local).
 
 ## Base case — single reversal candle
 
@@ -37,28 +36,39 @@ identical in method.)*
   - These two points replace the single-candle high/low used in the base case, and the same
     fib-marking process is applied.
 
-## Trend-day variant
+## Trend-day variant (resolved 2026-08-19)
 
-- If a **trend is already running through midnight** (price isn't chopping/reversing but pushing
-  directionally), the marking approach changes. Trader flagged this as a distinct case to define
-  later — **not yet specified**. Do not assume the base-case method applies unmodified on trend
-  days.
+- Trades **can** be taken during a midnight trend-through — there's no special restriction there.
+- The actual rule: if price makes a move that **"ignores the 5"** — i.e. blows through/ignores the
+  5-minute deciding-candle deviation without reacting to it — you **draw a new deviation** based
+  on the resulting swing, using the Method B (manipulation leg) logic below. So "trend day" isn't
+  a separate marking algorithm; it's just: the original Method A deviation can get invalidated
+  by a move that disregards it, and when that happens you re-anchor off the swing that move left
+  behind instead.
 
-## Method B — Manipulation Leg (2026-08-19, more discretionary)
+## Method B — Manipulation Leg
 
 There are **two** valid ways to draw the midnight deviation. Everything above (base case +
-extended/chained-candle case) is **Method A**. There is also **Method B**:
+extended/chained-candle case) is **Method A**. There is also **Method B**, and per the
+trend-day resolution above, Method B is specifically what you fall back to when Method A gets
+invalidated by price ignoring it.
 
 - A **manipulation leg** is the higher-low (in a bullish context) or lower-high (in a bearish
   context) that forms right before or after a large move at/around midnight.
-- Draw the same fib-ladder tool off the two points of that leg instead of off the candle-run high/
-  low used in Method A.
-- This is explicitly called out as **more discretionary** than Method A — identifying what counts
-  as "the" manipulation leg (vs. just noise) requires judgment, not a fixed rule. Treat this as a
-  harder confluence to automate cleanly; may need a scoring/heuristic approach rather than a
-  strict detection rule, or may need to stay semi-manual longer than Method A.
-- Not yet specified: exactly when to prefer Method B over Method A on a given session — trader has
-  not yet given a rule for which method applies when. **Open question**, do not assume a default.
+- **2026-08-19, tentative:** trader's own description of a manipulation leg is "top to bottom of
+  that individual candle" (trader's own hedge: "I think") — i.e. possibly just the full
+  high-to-low range of **one** candle (the manipulating candle), not necessarily a multi-candle
+  swing structure. This is a narrower/simpler definition than the original "higher-low/lower-high
+  swing point" framing above, and the trader wasn't fully certain. **Treat as unconfirmed — needs
+  a worked chart example before coding**, since it changes whether Method B needs one candle or a
+  detected local swing.
+- Draw the same fib-ladder tool off the two points of that leg/candle instead of off the
+  candle-run high/low used in Method A.
+- This is explicitly called out as **more discretionary** than Method A. **2026-08-19 confirmed:
+  choice between Method A and Method B is "generally feel"** — there is no fixed rule for which
+  applies when, beyond the trend-day fallback case above. Do not attempt to hard-code a decision
+  rule here; this will likely need to stay semi-discretionary (or eventually learned from a large
+  labeled example set) rather than a clean detection function.
 
 ## Level significance & discretion
 

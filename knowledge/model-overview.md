@@ -74,11 +74,20 @@ example from the trader.
 - Historical R:R outcomes (1:6–1:10) are a result of this process, not a target set in advance.
 
 ## What's still open / to define as we go
-- [ ] Exact timezone/session convention for "midnight" (trader is US-Georgia based, references
-      UTC, unsure if it aligns with the Asia session open — see `midnight-deviation-method.md`)
-- [ ] Full midnight-deviation marking method confirmation (worked chart example pending)
-- [ ] Rules for when the setup is invalidated / no-trade conditions
-- [ ] How structure/bias interacts with the midnight deviation on trend days specifically
+
+See `open-questions.md` for the full running list. Resolved as of 2026-08-19: midnight timezone
+(00:00 UTC-4/New York), trend-day handling (trade normally; re-anchor off a new swing if price
+"ignores" the original deviation).
+
+## 2026-08-19 — pivot to a codeable baseline first
+
+Trader flagged that the full discretionary model (manipulation legs, OTE swing selection, etc.)
+is extremely hard to encode as deterministic Pine Script in one shot. Decision: build a **basic,
+working trend-following strategy first** (simple, backtestable in the TradingView Strategy
+Tester today) as a scaffold, then iteratively layer the ICT/midnight-deviation confluences on top
+of it rather than trying to ship the full discretionary model as v1. See `pinescript/` for the
+starting strategy. The knowledge docs above remain the target model to work toward — they are not
+invalidated, just not the literal v1 implementation.
 
 This file should stay high-level. Individual confluence definitions, weights, and status live in
 `confluences.yaml`. Concrete trade examples live in `examples.md`. The midnight-marking mechanics
