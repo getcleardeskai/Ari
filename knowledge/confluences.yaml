@@ -1,0 +1,56 @@
+# Confluence registry
+#
+# This is the living list of individual confluences that feed the model. Edit weights/status
+# freely as we backtest — that's the whole point of this file being separate from the prose
+# overview in model-overview.md.
+#
+# Fields:
+#   id          - short stable identifier (used in pinescript/backtests, don't rename casually)
+#   name        - human readable name
+#   category    - "anchor" (midnight level/deviation), "htf" (higher-timeframe zone),
+#                 "ltf" (lower-timeframe refinement), or "filter" (context/no-trade condition)
+#   timeframe   - timeframe(s) this confluence is drawn on
+#   description - what it is / how it's identified
+#   weight      - 0-100, current importance in the model (start at 50 = unranked/neutral)
+#   status      - active | testing | disabled | deprecated
+#   notes       - free-form, running commentary (what we've observed testing it)
+
+version: 1
+last_updated: null  # set on next real edit
+
+confluences:
+  - id: midnight_deviation
+    name: Midnight Deviation
+    category: anchor
+    timeframe: intraday (from 00:00 open)
+    description: >
+      Price's deviation away from the midnight open level. Acts as the primary timing/anchor
+      mechanism for entries — the model looks for this to align with a refined confluence zone.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: htf_confluence_zone
+    name: Higher-Timeframe Confluence Zone
+    category: htf
+    timeframe: TBD (large timeframe, e.g. Weekly/Daily — confirm)
+    description: >
+      Placeholder — an area on a larger timeframe identified as having significant historical
+      buying or selling pressure. Needs the specific tool(s)/definition (e.g. order block, FVG,
+      liquidity pool, prior day/week high-low, volume profile node, etc.) filled in.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: ltf_refined_zone
+    name: Lower-Timeframe Refined Zone
+    category: ltf
+    timeframe: TBD (progressively smaller TFs used to scale down htf_confluence_zone)
+    description: >
+      Placeholder — the result of scaling an htf_confluence_zone down through smaller timeframes
+      to tighten it into a precise entry area.
+    weight: 50
+    status: testing
+    notes: []
+
+# Add new confluences below as they're defined. Keep ids lowercase_snake_case.
