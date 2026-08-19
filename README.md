@@ -15,27 +15,39 @@ needs to be re-explained between sessions, and no manual GitHub work is required
 
 ## Current direction (2026-08-19)
 
-**Trend Bias + QQE.** Market structure (BOS/CHoCH) computed on Daily, Weekly, and Hourly sets a
-directional bias, shown in a dashboard on the chart. QQE (smoothed-RSI + ATR-trailing-band)
-crossovers trigger entries, only in the direction the bias allows. An ATR trailing stop manages
-risk. See `pinescript/trend-bias-qqe-strategy.pine` — the working implementation — and
-`knowledge/model-overview.md` "Current direction" for the full pivot history (this is the third
-approach tried in one day; the first two — midnight-deviation/OTE, then ICT confluence-clustering
-— are archived, not deleted, in case anything from them becomes useful again).
+**Two independent strategies, built/validated separately, that will eventually confirm or deny
+each other:**
+
+1. **Mean reversion** — waits for price to overextend, trades the reversion back. Not yet
+   formalized — `knowledge/strategies/mean-reversion.md`.
+2. **Trend following** — looks for a big directional push and trades with it. First version
+   already built: market structure (BOS/CHoCH) on Daily/Weekly/Hourly sets bias, QQE crossovers
+   trigger entries in that direction, ATR trailing stop manages risk —
+   `pinescript/trend-bias-qqe-strategy.pine`, described in
+   `knowledge/strategies/trend-following.md`.
+
+The end goal is a live execution bot that trusts pre-validated signals from these strategies and
+just acts on candle close — no live discretion. Full architecture:
+`knowledge/automation-architecture.md`. Full pivot history (this trend approach is the third tried
+in one day; midnight-deviation/OTE and ICT confluence-clustering are archived, not deleted):
+`knowledge/model-overview.md`.
 
 ## Structure
 
-- `knowledge/model-overview.md` — the core framework, current direction, and full pivot history.
-  Start here.
-- `pinescript/trend-bias-qqe-strategy.pine` — the current strategy. See `pinescript/README.md` for
-  all scripts and how to use them.
+- `knowledge/automation-architecture.md` — the end-goal system: two independent strategies, how
+  they're meant to combine, and what the live execution bot actually does. Start here for the big
+  picture.
+- `knowledge/strategies/mean-reversion.md`, `knowledge/strategies/trend-following.md` — one doc
+  per strategy, built/refined independently.
+- `knowledge/model-overview.md` — full pivot history for how we got to the current approach.
+- `pinescript/trend-bias-qqe-strategy.pine` — the trend strategy's current implementation. See
+  `pinescript/README.md` for all scripts and how to use them.
 - `knowledge/confluences.yaml`, `knowledge/ict-glossary.md`, `knowledge/trade-strength-framework.md`
-  — mostly reference material from the archived ICT-confluence phase now; `market_structure` and
-  `change_of_structure` in `confluences.yaml` remain active since they're the basis for the
-  current bias model.
+  — reference material from the archived ICT-confluence phase; `market_structure` and
+  `change_of_structure` in `confluences.yaml` remain active since they're the basis for the trend
+  strategy's bias model.
 - `knowledge/examples.md` — real or reference/illustrative trade examples.
-- `knowledge/open-questions.md` — running checklist, mostly from the archived phase; due for a
-  fresh pass specific to the Trend Bias + QQE model once there's backtest data to react to.
+- `knowledge/open-questions.md` — running checklist, mostly from the archived phase.
 - `knowledge/midnight-deviation-method.md`, `knowledge/ote-method.md`,
   `knowledge/automation-requirements.md` — archived, kept for reference.
 - `backtests/` — notes and results from testing specific configurations.
