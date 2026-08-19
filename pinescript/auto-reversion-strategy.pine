@@ -22,9 +22,8 @@
 //
 // Exit: take profit when price touches the INNER band on the opposite side
 // (R1 for longs, S1 for shorts) — a continuously-updated limit order at the
-// live level, not frozen at entry. Stop loss is at the OUTER band on the
-// entry side — the bottom of the lower (S2) band for longs, the top of the
-// upper (R2) band for shorts — also live-updated each bar.
+// live level, not frozen at entry. Stop loss is a fixed 70 ticks from entry
+// (2026-08-19, updated — was the outer band, now a plain tick count).
 //
 // MRC is an exact port of fareidzulkifli's "Mean Reversion Channel"
 // (SuperSmoother variant): mean line = SuperSmoother(hlc3, 200); band width
@@ -65,9 +64,14 @@ rsiLen    = input.int(14, "RSI length", minval = 2, group = grpQQE)
 rsiSmooth = input.int(5, "RSI smoothing (EMA)", minval = 1, group = grpQQE)
 qqeFactor = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group = grpQQE)
 
+grpRisk = "Risk / Exit"
+stopTicks = input.float(70, "Stop loss (ticks)", minval = 1, group = grpRisk)
+
 grpColor = "Colors"
 colBull = input.color(#089981, "Bullish color", group = grpColor)
 colBear = input.color(#f23645, "Bearish color", group = grpColor)
+
+tick = syminfo.mintick
 
 // ---------------------------------------------------------------------------
 // MRC
@@ -214,23 +218,22 @@ qqeLongSignal  = qqeCrossUp   and barstate.isconfirmed
 qqeShortSignal = qqeCrossDown and barstate.isconfirmed
 
 // ---------------------------------------------------------------------------
-// Setup — persistent touch, not same-bar. While bias holds, remember that
-// price has touched the outer band; once touched, take the next QQE
-// long/short signal whenever it comes (same bar or many bars later). Reset
-// if bias breaks before a signal arrives.
+// Setup — persistent touch, not same-bar. Once price has touched the outer
+// band, remember that; take the next QQE long/short signal whenever it
+// comes (same bar or many bars later), as long as bias is true AT THAT
+// MOMENT. The touch itself does NOT get erased by a momentary bias flicker
+// in between (that was the earlier behavior and is the likely cause of
+// setups that looked valid on the chart silently not firing — bias can
+// flip for a single bar near the boundary without the setup actually being
+// invalid). Touch only clears once consumed by an actual entry.
 // ---------------------------------------------------------------------------
 var bool touchedLower = false
 var bool touchedUpper = false
 
 if barstate.isconfirmed
-    if not biasLongOk
-        touchedLower := false
-    else if low <= lower2
+    if low <= lower2
         touchedLower := true
-
-    if not biasShortOk
-        touchedUpper := false
-    else if high >= upper2
+    if high >= upper2
         touchedUpper := true
 
 doLongEntry  = false
@@ -253,14 +256,12 @@ if longCondition
 if shortCondition
     strategy.entry("Short", strategy.short)
 
-// Stop and target are both LIVE — continuously updated each bar, not frozen
-// at entry. Stop = outer band on the entry side (bottom of S2 for longs,
-// top of R2 for shorts). Target = inner band on the opposite side (R1 for
-// longs, S1 for shorts).
+// Target is LIVE — continuously updated each bar, not frozen at entry (R1
+// for longs, S1 for shorts). Stop is a fixed tick count from entry.
 if strategy.position_size > 0
-    strategy.exit("Long Exit", "Long", stop = lower2, limit = upper1)
+    strategy.exit("Long Exit", "Long", stop = strategy.position_avg_price - stopTicks * tick, limit = upper1)
 if strategy.position_size < 0
-    strategy.exit("Short Exit", "Short", stop = upper2, limit = lower1)
+    strategy.exit("Short Exit", "Short", stop = strategy.position_avg_price + stopTicks * tick, limit = lower1)
 
 plotshape(longCondition, style = shape.triangleup, location = location.belowbar, color = colBull, size = size.small, title = "Long Entry")
 plotshape(shortCondition, style = shape.triangledown, location = location.abovebar, color = colBear, size = size.small, title = "Short Entry")

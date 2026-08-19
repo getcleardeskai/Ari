@@ -99,12 +99,19 @@ Trader confirmed the diagnostic approach found real bugs (SMMA vs SMA, outer mul
 
 **Exit:** take profit at the **inner** band on the opposite side (R1 for longs, S1 for shorts),
 continuously updated to the live level each bar (not frozen at entry) — matches "exit at candle
-touching inner part of top MRC band" literally. **Stop loss (2026-08-19, updated):** the **outer**
-band on the entry side — bottom of the lower (S2) band for longs, top of the upper (R2) band for
-shorts — also live-updated, replacing the earlier fixed-tick/swing-low stop entirely.
+touching inner part of top MRC band" literally. **Stop loss:** a fixed **70 ticks** from entry
+(2026-08-19 — briefly was the live outer band, changed back to a plain tick count per trader's
+preference).
 
 **2026-08-19, later:** added the short side as the exact mirror of long — same bias/touch/signal
 logic, opposite direction.
+
+**2026-08-19, later still:** trader reported trades "sometimes" not firing on setups that looked
+valid on the chart. Likely cause found and fixed: the touch state (`touchedLower`/`touchedUpper`)
+was resetting to false the instant bias flickered false for even a single bar between the touch
+and the signal — which can happen near the band boundary without the setup actually being
+invalid. Removed that reset; touch now only clears once consumed by an actual entry, and bias is
+only required to hold at the moment the signal fires, not continuously from touch through signal.
 
 The diagnostic funnel table and rule toggles from the debugging phase were removed from the
 script now that the ruleset is settled — they did their job (found the real bugs) and would just
