@@ -27,6 +27,14 @@ needs to be re-explained between sessions, and no manual GitHub work is required
 - `pinescript/` — Pine Script indicators/strategies as we build and iterate on them.
 - `backtests/` — notes and results from testing specific rule/weight configurations.
 
+## Automation goal
+
+The end goal is **full automation** — every confluence (midnight deviation, structure, FVG/iFVG,
+BPR, rejection/order blocks, previous session liquidity) gets auto-plotted by Pine Script rather
+than marked by hand on the chart. Method docs in `knowledge/` are written with that in mind: once
+a method is fully confirmed (no open questions left), it should translate directly into
+deterministic Pine Script logic.
+
 ## Core model, in short
 
 1. Establish the **midnight level** (midnight open) and the **midnight deviation** off that level

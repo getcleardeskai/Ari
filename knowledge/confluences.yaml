@@ -36,6 +36,10 @@ confluences:
       - "2026-08-19: full marking method has multiple cases (single reversal candle vs. a run of
          several same-color candles before the shift) — see midnight-deviation-method.md. Method
          still needs a worked chart example from the trader to fully lock in."
+      - "2026-08-19: exact fib tool settings confirmed from chart screenshots — fixed level
+         ladder (1, 0, -1, -2, -2.5, -3.25, -3.5, -4, -4.5, -5), reversed, no log scale, no
+         extend. See midnight-deviation-method.md for the full breakdown and remaining open
+         items (anchor mapping, upward projection) before this gets coded into Pine Script."
 
   - id: market_structure
     name: Market Structure (Bias / BOS / CHoCH)
