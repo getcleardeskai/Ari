@@ -81,7 +81,32 @@ channel, a volume-vs-its-average check, QQE, close-confirmed entries, tick or st
 stops, band-level take-profit) is standard, buildable Pine. The only real open item is getting the
 MRC band math to actually match your specific indicator — everything else is mechanical.
 
-## 2026-08-19 — comparison against a simplified version, diagnostics added
+## 2026-08-19 — v1 locked in: simple, long-only
+
+Trader confirmed the diagnostic approach found real bugs (SMMA vs SMA, outer multiplier 1.5 vs
+2.415) and asked to go simple for the first real version rather than keep iterating on the full
+5-rule/toggle system. Locked-in v1 rules, implemented in
+`../../pinescript/auto-reversion-strategy.pine`:
+
+1. **Bias:** entire MRC channel sits above the 200 MA (equivalently: MA fully below the outer
+   band) — same condition as before, just phrased the other way round.
+2. **Touch (persistent, not same-bar):** price touches the outer band at some point while bias
+   holds. Explicitly confirmed: the touch and the QQE signal do **not** need to happen on the same
+   candle — once touched, the setup stays "armed" until a signal arrives or bias breaks.
+3. **Signal:** the next QQE long signal after a touch, however long that takes.
+4. **Timing:** confirmed bar close only.
+5. **Long only** for v1 — no shorts, no volume filter. Both explicitly deferred to a later
+   version once this one is validated.
+
+**Exit:** take profit at the **inner** top band (R1), continuously updated to the live level each
+bar (not frozen at entry) — matches "exit at candle touching inner part of top MRC band"
+literally. Stop loss stays as a safety net (fixed ticks by default).
+
+The diagnostic funnel table and rule toggles from the debugging phase were removed from the
+script now that the ruleset is settled — they did their job (found the real bugs) and would just
+be clutter now. Can be added back if useful once shorts/volume are reintroduced.
+
+## 2026-08-19 — comparison against a simplified version, diagnostics added (superseded above)
 
 Trader shared a version (written elsewhere) that produced trades where the full port didn't.
 Diffed it directly: that version only implements 2 of the 5 rules (bias + QQE signal) — it drops
