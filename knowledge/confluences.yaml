@@ -2,7 +2,13 @@
 #
 # This is the living list of individual confluences that feed the model. Edit weights/status
 # freely as we backtest — that's the whole point of this file being separate from the prose
-# overview in model-overview.md. Terminology is ICT (Inner Circle Trader) style.
+# overview in model-overview.md. Terminology is ICT (Inner Circle Trader) style — see
+# ict-glossary.md for full definitions of every concept referenced below.
+#
+# 2026-08-19: a batch of new confluences was added from glossary notes. Per trader's instruction
+# ("ignore star/rating stuff, we will edit this later, just capture WHAT confluences exist"),
+# these all default to weight 50 / status testing regardless of how the source material described
+# their importance — weighting is deliberately deferred to a later pass.
 #
 # Fields:
 #   id          - short stable identifier (used in pinescript/backtests, don't rename casually)
@@ -70,6 +76,11 @@ confluences:
       - "2026-08-19: trader called this out as probably the single biggest factor since it sets
          bias for everything else — starting weight set above neutral (50) on that basis, pending
          actual backtest evidence."
+      - "2026-08-19: glossary clarified BOS vs CHoCH/MSS more precisely than this entry's name
+         implies — BOS breaks a swing high/low (continuation confirmation), while MSS/COS breaks
+         the most recent Protected High/Low specifically (reversal signal). See ict-glossary.md
+         and the new change_of_structure entry below; consider splitting BOS and MSS into
+         separate confluence entries once we're ready to code them distinctly."
 
   - id: previous_session_liquidity
     name: Previous Session High/Low (Liquidity)
@@ -211,5 +222,140 @@ confluences:
     status: testing
     notes:
       - "2026-08-19: only two anecdotal data points so far, not yet statistically validated."
+
+  - id: protected_high_low
+    name: Protected Low/High + Catalyst (PLC / PHC / PL / PH)
+    category: trigger
+    timeframe: same TF the PDA it's layered on is drawn on
+    description: >
+      Confirmation model layered on any valid PDA (FVG, IFVG, BPR, etc). Bullish: first rejection
+      off the PDA = Protected Low Catalyst (PLC); a later higher low off the same PDA = Protected
+      Low (PL). Bearish mirrored: Protected High Catalyst (PHC) then Protected High (PH). Waiting
+      for PL/PH confirmation instead of entering on first touch raises probability. See
+      ict-glossary.md.
+    weight: 50
+    status: testing
+    notes:
+      - "2026-08-19: source material calls this one of the highest-probability entry models, but
+         also explicitly not a standalone decider — still requires correct premium/discount
+         positioning and trend/structure alignment. Weight left at default per instruction to
+         defer rating; revisit once backtest data exists."
+
+  - id: inverse_rejection_block
+    name: Inverse Rejection Block (IRB)
+    category: htf
+    timeframe: ladder (Daily -> 4H -> 1H -> 45m -> 30m -> 15m -> 5m)
+    description: >
+      Forms when price breaks through a previously respected Rejection Block, flipping its role
+      (old support becomes resistance, or vice versa). High-probability continuation area after a
+      shift in order flow. See ict-glossary.md.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: breaker_block
+    name: Breaker Block (BB)
+    category: htf
+    timeframe: ladder (Daily -> 4H -> 1H -> 45m -> 30m -> 15m -> 5m)
+    description: >
+      Forms when an Order Block fails and price breaks through it, flipping its role — same
+      pattern as IFVG/IRB. Strong continuation entry after a change in market structure. See
+      ict-glossary.md.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: change_of_structure
+    name: Change of Structure / Market Structure Shift (COS / MSS)
+    category: bias
+    timeframe: primarily Daily, referenced down the ladder
+    description: >
+      Occurs when price breaks the most recent Protected Low (bullish trend) or Protected High
+      (bearish trend) — signals the current trend may be ending, control shifting, reversal or
+      deeper retrace more likely. Distinct from BOS (see market_structure) which confirms
+      continuation rather than reversal. See ict-glossary.md.
+    weight: 50
+    status: testing
+    notes:
+      - "2026-08-19: split out from market_structure for precision since BOS (continuation) and
+         MSS/COS (reversal) are triggered by different conditions (swing high/low vs. Protected
+         High/Low). Consider whether market_structure should be renamed to just cover BOS once
+         both are actually coded."
+
+  - id: range_settlement
+    name: Range Settlement (RS)
+    category: filter
+    timeframe: TBD
+    description: >
+      Confirms where the market is likely to expand next after price finishes building liquidity
+      within a defined range. Key idea: wait for acceptance/settlement outside the range rather
+      than assuming the first breakout is valid. Used to validate breakout direction before
+      looking for continuation entries into PDAs. See ict-glossary.md.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: short_term_high_low
+    name: Short-Term High / Low (STH / STL)
+    category: ltf
+    timeframe: smallest structure timeframe in use
+    description: >
+      Smallest form of market structure — a high/low the immediately surrounding candles fail to
+      exceed. Creates short-term liquidity (stops cluster above STH / below STL). More
+      significant near a PDA or premium/discount zone. See ict-glossary.md.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: intermediate_term_high_low
+    name: Intermediate-Term High / Low (ITH / ITL)
+    category: htf
+    timeframe: built from multiple STH/STL
+    description: >
+      Larger structure formed from multiple STHs/STLs — a high with STHs on both sides (ITH) or a
+      low with STLs on both sides (ITL). Represents a larger liquidity pool than a single STH/STL.
+      See ict-glossary.md.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: external_range_liquidity
+    name: External Range Liquidity (ERL)
+    category: htf
+    timeframe: n/a (liquidity concept, not TF-specific)
+    description: >
+      Liquidity resting outside a defined trading range — above a significant high (BSL) or below
+      a significant low (SSL). Price often expands toward ERL to take those stops, then reverses
+      or continues depending on context. See ict-glossary.md.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: internal_range_liquidity
+    name: Internal Range Liquidity (IRL)
+    category: ltf
+    timeframe: n/a (liquidity concept, not TF-specific)
+    description: >
+      Liquidity resting inside a defined range — at STHs, STLs, minor swing points, equal
+      highs/lows. Often taken as a step toward external liquidity. See ict-glossary.md.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: premium_discount_zone
+    name: Premium / Discount Zone (PDZ)
+    category: filter
+    timeframe: n/a (range-relative, computed from a significant high/low + 50% EQ)
+    description: >
+      Range split at the 50% equilibrium level. Upper half = Premium (look for shorts at a
+      bearish PDA); lower half = Discount (look for longs at a bullish PDA). See ict-glossary.md.
+    weight: 50
+    status: testing
+    notes:
+      - "2026-08-19: trader gave this as an unconditional hard rule — 'NEVER SELL IN DISCOUNT,
+         NEVER BUY IN PREMIUM. NO EXCEPTIONS.' Weight left at default per instruction to defer
+         rating, but flagging now: this reads as a hard block, not a soft-scored confluence, same
+         as news_filter — worth deciding whether filter-category entries need a distinct
+         hard-block mechanism rather than the 0-100 weight scale once we get to weighting."
 
 # Add new confluences below as they're defined. Keep ids lowercase_snake_case.

@@ -23,6 +23,11 @@ needs to be re-explained between sessions, and no manual GitHub work is required
   including its (highly discretionary) swing-point selection.
 - `knowledge/automation-requirements.md` — functional requirements for the eventual bot: alerting
   behavior, confidence scoring, thresholds.
+- `knowledge/ict-glossary.md` — reference definitions for every ICT concept in the model (FVG,
+  IFVG, BPR, PLC/PL, RB/IRB, OB/BB, BOS/MSS, liquidity concepts, premium/discount, etc).
+- `knowledge/trade-strength-framework.md` — the general checklist of what stacks confluence into a
+  stronger setup (HTF bias, liquidity target, location, PDA, sweep, confirmation, displacement,
+  timing, LTF entry).
 - `knowledge/confluences.yaml` — the living, weighted list of individual confluences (what they
   are, what timeframe they're drawn from, current weight/importance, status). This is the file
   that changes most often as we test and re-rank confluences.
