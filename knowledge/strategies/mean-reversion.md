@@ -17,7 +17,10 @@ to eventually confirm/deny it.
   in `../../pinescript/auto-reversion-strategy.pine`.
 - **200-period moving average** (the white line running through price) — the bias/validity
   filter, not the overextension signal itself. Separate from MRC's own internal mean line (MRC
-  uses `hlc3` + SuperSmoother, this bias filter is a plain SMA of `close`).
+  uses `hlc3` + SuperSmoother). **Correction 2026-08-19:** confirmed from the trader's own
+  TradingView object list this is an **SMMA** (Smoothed MA), not a plain SMA — SMMA is what Pine
+  calls RMA (Wilder's smoothing, `ta.rma()`). The first Pine port used `ta.sma()`, which was
+  wrong and likely a real contributor to bias conditions rarely/never triggering — fixed.
 - **Hawkeye Volume** — the volume histogram at the bottom with a white average-volume line. We
   don't need to replicate the full Hawkeye indicator (it does its own bar-by-bar climax
   classification) — the actual rule used here only needs **current volume vs. its own moving

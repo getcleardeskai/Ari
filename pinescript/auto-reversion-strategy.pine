@@ -60,8 +60,10 @@ innerMult  = input.float(1.0, "Inner channel size multiplier", minval = 0.1, gro
 outerMult  = input.float(2.415, "Outer channel size multiplier", minval = 0.1, group = grpMRC)
 entryBandLevel = input.int(2, "Entry/overextension band level (1=inner, 2=outer)", minval = 1, maxval = 2, group = grpMRC)
 tpBandLevel    = input.int(2, "Take-profit band level (1=inner, 2=outer)", minval = 1, maxval = 2, group = grpMRC)
+showZone   = input.bool(true, "Draw gradient zone (visual only)", group = grpMRC)
+zoneTransp = input.int(60, "Zone transparency", minval = 0, maxval = 100, group = grpMRC)
 
-grpBias = "Bias (200 MA)"
+grpBias = "Bias (200 SMMA)"
 maLen = input.int(200, "Bias MA length", minval = 1, group = grpBias)
 
 grpVol = "Volume Confirmation"
@@ -119,6 +121,75 @@ pLower2 = plot(lower2, "MRC S2 (outer)", color = color.new(color.red, 50))
 fill(pUpper1, pUpper2, color = color.new(color.red, 88))
 fill(pLower1, pLower2, color = color.new(color.green, 88))
 
+// Gradient zone extending past the outer band — visual match to the source
+// indicator's "Draw Zone" feature. 9 boundary levels per side, 8 shaded
+// segments each, red (furthest out) fading to gold (nearest the outer band).
+gradsize = 0.5
+
+upper2_1 = upper2 + meanrange * gradsize * 4
+upper2_2 = upper2 + meanrange * gradsize * 3
+upper2_3 = upper2 + meanrange * gradsize * 2
+upper2_4 = upper2 + meanrange * gradsize * 1
+upper2_5 = upper2 + meanrange * gradsize * 0
+upper2_6 = upper2 + meanrange * gradsize * -1
+upper2_7 = upper2 + meanrange * gradsize * -2
+upper2_8 = upper2 + meanrange * gradsize * -3
+upper2_9 = upper2 + meanrange * gradsize * -4
+lower2_1 = lower2 - meanrange * gradsize * 4
+lower2_2 = lower2 - meanrange * gradsize * 3
+lower2_3 = lower2 - meanrange * gradsize * 2
+lower2_4 = lower2 - meanrange * gradsize * 1
+lower2_5 = lower2 - meanrange * gradsize * 0
+lower2_6 = lower2 - meanrange * gradsize * -1
+lower2_7 = lower2 - meanrange * gradsize * -2
+lower2_8 = lower2 - meanrange * gradsize * -3
+lower2_9 = lower2 - meanrange * gradsize * -4
+
+pu1 = plot(upper2_1, color = na, display = display.none)
+pu2 = plot(upper2_2, color = na, display = display.none)
+pu3 = plot(upper2_3, color = na, display = display.none)
+pu4 = plot(upper2_4, color = na, display = display.none)
+pu5 = plot(upper2_5, color = na, display = display.none)
+pu6 = plot(upper2_6, color = na, display = display.none)
+pu7 = plot(upper2_7, color = na, display = display.none)
+pu8 = plot(upper2_8, color = na, display = display.none)
+pu9 = plot(upper2_9, color = na, display = display.none)
+pl1 = plot(lower2_1, color = na, display = display.none)
+pl2 = plot(lower2_2, color = na, display = display.none)
+pl3 = plot(lower2_3, color = na, display = display.none)
+pl4 = plot(lower2_4, color = na, display = display.none)
+pl5 = plot(lower2_5, color = na, display = display.none)
+pl6 = plot(lower2_6, color = na, display = display.none)
+pl7 = plot(lower2_7, color = na, display = display.none)
+pl8 = plot(lower2_8, color = na, display = display.none)
+pl9 = plot(lower2_9, color = na, display = display.none)
+
+zColor1 = color.new(#FF0000, zoneTransp)
+zColor2 = color.new(#FF4200, zoneTransp)
+zColor3 = color.new(#FF5D00, zoneTransp)
+zColor4 = color.new(#FF7400, zoneTransp)
+zColor5 = color.new(#FF9700, zoneTransp)
+zColor6 = color.new(#FFAE00, zoneTransp)
+zColor7 = color.new(#FFC500, zoneTransp)
+zColor8 = color.new(#FFCD00, zoneTransp)
+
+fill(pu1, pu2, color = showZone ? zColor1 : na)
+fill(pu2, pu3, color = showZone ? zColor2 : na)
+fill(pu3, pu4, color = showZone ? zColor3 : na)
+fill(pu4, pu5, color = showZone ? zColor4 : na)
+fill(pu5, pu6, color = showZone ? zColor5 : na)
+fill(pu6, pu7, color = showZone ? zColor6 : na)
+fill(pu7, pu8, color = showZone ? zColor7 : na)
+fill(pu8, pu9, color = showZone ? zColor8 : na)
+fill(pl1, pl2, color = showZone ? zColor1 : na)
+fill(pl2, pl3, color = showZone ? zColor2 : na)
+fill(pl3, pl4, color = showZone ? zColor3 : na)
+fill(pl4, pl5, color = showZone ? zColor4 : na)
+fill(pl5, pl6, color = showZone ? zColor5 : na)
+fill(pl6, pl7, color = showZone ? zColor6 : na)
+fill(pl7, pl8, color = showZone ? zColor7 : na)
+fill(pl8, pl9, color = showZone ? zColor8 : na)
+
 f_bandAt(level, upperSide) =>
     band = level == 1 ? (upperSide ? upper1 : lower1) : (upperSide ? upper2 : lower2)
     band
@@ -129,10 +200,13 @@ tpUpperBand    = f_bandAt(tpBandLevel, true)
 tpLowerBand    = f_bandAt(tpBandLevel, false)
 
 // ---------------------------------------------------------------------------
-// Bias — 200 MA fully below/above the entire (outer) MRC band
+// Bias — 200 MA fully below/above the entire (outer) MRC band. Trader's
+// chart uses SMMA (Smoothed MA) specifically, not a plain SMA — SMMA is the
+// same thing Pine calls RMA (Wilder's smoothing), so ta.rma() here, not
+// ta.sma(). This was wrong in the earlier version.
 // ---------------------------------------------------------------------------
-maVal = ta.sma(close, maLen)
-plot(maVal, "Bias MA", color = color.new(color.white, 0), linewidth = 2)
+maVal = ta.rma(close, maLen)
+plot(maVal, "Bias MA (SMMA)", color = color.new(color.white, 0), linewidth = 2)
 
 biasLongOk  = maVal < lower2
 biasShortOk = maVal > upper2
