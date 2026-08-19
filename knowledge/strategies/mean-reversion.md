@@ -91,6 +91,13 @@ more often — fewer, looser conditions — not because anything in the fuller p
 being explicit: dropping volume confirmation means it would take the exact trade the trader
 called out as invalid (QQE signal with no volume behind it).
 
+(**Correction 2026-08-19, later:** confirmed directly from the trader's real MRC settings dialog —
+their actual Outer Channel Size Multiplier is **1.5**, not the public script's own default of
+2.415. So that simplified version's 1.5 wasn't arbitrary — it happened to match the trader's real
+config on this one setting, even though it still dropped the location and volume rules entirely.
+`outerMult` default corrected to 1.5 in the Pine port; everything else — hlc3 source,
+SuperSmoother filter, 200 lookback, inner mult 1.0 — already matched.)
+
 Rather than pick a side, added to `../../pinescript/auto-reversion-strategy.pine`:
 - A **diagnostic funnel table** (bottom-left on the chart) counting how many confirmed bars pass
   each stage — bias → +location → +QQE signal → +volume→entered — so it's possible to see exactly

@@ -50,9 +50,14 @@
 // timeframe) can be confirmed working. Turn the three toggles on ONE AT A
 // TIME, in the numbered order shown in their input labels, watching the
 // diagnostic table's bar counts drop at each stage — that shows you exactly
-// what each real rule costs in trade frequency, rather than either 5 rules
-// ANDed together with zero visibility, or someone else's version that
-// quietly dropped 2 of your 5 rules to "make it work."
+// what each real rule costs in trade frequency.
+//
+// UPDATE 2026-08-19 (final for now): outerMult default corrected to 1.5,
+// confirmed directly from the trader's real MRC indicator settings dialog —
+// NOT the public script's own default of 2.415. Everything else (hlc3
+// source, SuperSmoother filter, 200 lookback, inner mult 1.0) already
+// matched. This should bring the bands into close visual alignment with the
+// real chart.
 //
 // No painting (barstate.isconfirmed gating) and no re-entries (pyramiding=0
 // + position-size checks) follow the same pattern as trend-bias-qqe-strategy.pine.
@@ -73,7 +78,7 @@ grpMRC = "MRC (exact port)"
 mrcSource  = input.source(hlc3, "Price source", group = grpMRC)
 mrcLength  = input.int(200, "Lookback period", minval = 1, group = grpMRC)
 innerMult  = input.float(1.0, "Inner channel size multiplier", minval = 0.1, group = grpMRC)
-outerMult  = input.float(2.415, "Outer channel size multiplier", minval = 0.1, group = grpMRC)
+outerMult  = input.float(1.5, "Outer channel size multiplier", minval = 0.1, group = grpMRC)
 entryBandLevel = input.int(2, "Entry/overextension band level (1=inner, 2=outer)", minval = 1, maxval = 2, group = grpMRC)
 tpBandLevel    = input.int(2, "Take-profit band level (1=inner, 2=outer)", minval = 1, maxval = 2, group = grpMRC)
 showZone   = input.bool(true, "Draw gradient zone (visual only)", group = grpMRC)
