@@ -2,7 +2,24 @@
 
 Strategies/indicators implementing the model from `../knowledge/model-overview.md`.
 
-## `confluence-viewer.pine` — current focus
+## `trend-bias-qqe-strategy.pine` — current focus
+
+Current focus (2026-08-19) — full pivot away from ICT confluences entirely. This is a real,
+backtestable **strategy**: Daily/Weekly/Hourly bias computed from market structure (BOS =
+continuation, CHoCH = reversal), shown in a top-right dashboard table; QQE (smoothed-RSI +
+ATR-trailing-band) crossovers trigger entries, but only in the direction the bias allows; an ATR
+trailing stop manages risk, with optional early exit on an opposing QQE cross or a bias flip.
+
+No painting (every signal only fires once its bar is confirmed closed) and no re-entries
+(pyramiding=0 plus an explicit position-size check) were both built in from the start, per
+request. See the file's own header comment for full detail on both.
+
+**How to use it:** TradingView → open an MNQ1! or NQ1! chart → Pine Editor → paste this file's
+contents → Add to Chart → Strategy Tester tab for backtest results; the bias dashboard and
+buy/sell arrows show directly on the chart. Hand-written, not yet run through TradingView's
+compiler — send me the exact error text if it throws one on first load.
+
+## `confluence-viewer.pine` — earlier iteration, kept for reference
 
 Current focus (2026-08-19) — a pure **visualization indicator**: pulls Structure (BOS/MSS-ChoCH),
 Fair Value Gaps, an approximate POC, and auto trendlines from a higher timeframe (default 1H,

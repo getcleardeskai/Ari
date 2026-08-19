@@ -1,0 +1,250 @@
+//@version=6
+// ============================================================================
+// Trend Bias + QQE Strategy
+//
+// Pivot (2026-08-19): dropped the ICT confluence-clustering approach
+// entirely. New model:
+//   1. BIAS — market structure (BOS = continuation, CHoCH = reversal) is
+//      computed independently on Daily, Weekly, and Hourly, and shown in a
+//      dashboard table (top-right). One of these (default Daily) is the
+//      "primary" bias that gates trade direction; optionally require all
+//      three to agree before trading at all.
+//   2. ENTRY — QQE (RSI smoothed + ATR-of-RSI trailing band) crossovers,
+//      taken only in the direction the bias allows: longs only when bias is
+//      bullish, shorts only when bias is bearish.
+//   3. EXIT — ATR trailing stop (protects capital, lets winners run since
+//      there's no fixed target), plus optional early exit on an opposing
+//      QQE cross or a bias flip against the position.
+//
+// Fixes applied vs. a naive QQE port, per explicit request:
+//   - NO PAINTING: every signal (QQE cross, structure break, entry) is only
+//     acted on / plotted once its bar is CONFIRMED CLOSED (barstate.isconfirmed).
+//     The underlying oscillator still updates intrabar like any indicator,
+//     but nothing is drawn or fired until the bar is done, so nothing you
+//     see ever flips back off after the fact.
+//   - NO RE-ENTRIES: strategy pyramiding is 0 (one position at a time), and
+//     entry conditions additionally check strategy.position_size directly,
+//     so a same-direction signal while already in that direction is a no-op
+//     — you only get a new order on a flip from flat/opposite.
+//
+// This is hand-written and not run through TradingView's compiler on my
+// end — if it throws an error on first load, send me the exact error text.
+// ============================================================================
+strategy("Trend Bias + QQE Strategy", overlay = true, pyramiding = 0,
+     default_qty_type = strategy.percent_of_equity, default_qty_value = 10,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.5,
+     slippage = 1, calc_on_every_tick = false,
+     max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+grpBias = "Bias (Structure)"
+biasPivotLen  = input.int(5, "Swing pivot length (bars)", minval = 2, group = grpBias)
+primaryBiasTF = input.timeframe("D", "Primary bias timeframe (gates trade direction)", group = grpBias)
+requireAlign  = input.bool(false, "Require Daily + Weekly + Hourly to all agree", group = grpBias)
+showStructureOnChart = input.bool(true, "Show BOS/CHoCH labels on this chart's own timeframe", group = grpBias)
+
+grpQQE = "QQE Entry Signal"
+rsiLen     = input.int(14, "RSI length", minval = 2, group = grpQQE)
+rsiSmooth  = input.int(5, "RSI smoothing (EMA)", minval = 1, group = grpQQE)
+qqeFactor  = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group = grpQQE)
+
+grpRisk = "Risk / Exit"
+atrLen       = input.int(14, "ATR length", minval = 1, group = grpRisk)
+stopAtrMult  = input.float(2.5, "Trailing stop = ATR x", minval = 0.1, step = 0.1, group = grpRisk)
+exitOnFlip   = input.bool(true, "Exit early on an opposing QQE cross", group = grpRisk)
+exitOnBias   = input.bool(true, "Exit early if HTF bias flips against the position", group = grpRisk)
+
+grpColor = "Colors"
+colBull = input.color(#089981, "Bullish color", group = grpColor)
+colBear = input.color(#f23645, "Bearish color", group = grpColor)
+
+// ---------------------------------------------------------------------------
+// Structure (BOS / MSS-ChoCH) — simplified swing-break model. Returns:
+//   bias     : 1 bullish, -1 bearish, 0 undecided
+//   evt      : 0 none, 1 BOS up, 2 BOS down, 3 CHoCH up, 4 CHoCH down
+//   evtPrice : the swing level that was broken (na if evt == 0)
+// This is a simplification of the full Protected-High/Low ICT model — it's
+// "last confirmed swing broken = signal," good enough to read bias at a
+// glance and drive trade direction.
+// ---------------------------------------------------------------------------
+f_structure(len) =>
+    var float swingHigh = na
+    var float swingLow  = na
+    var int   bias       = 0
+    var int   evt         = 0
+    var float evtPrice    = na
+
+    evt := 0
+    evtPrice := na
+
+    ph = ta.pivothigh(high, len, len)
+    pl = ta.pivotlow(low, len, len)
+    if not na(ph)
+        swingHigh := ph
+    if not na(pl)
+        swingLow := pl
+
+    if not na(swingHigh) and close > swingHigh and close[1] <= swingHigh
+        evt := bias == -1 ? 3 : 1
+        evtPrice := swingHigh
+        bias := 1
+        swingHigh := na
+
+    if not na(swingLow) and close < swingLow and close[1] >= swingLow
+        evt := bias == 1 ? 4 : 2
+        evtPrice := swingLow
+        bias := -1
+        swingLow := na
+
+    [bias, evt, evtPrice]
+
+// bias-only variant (single return value) for the multi-timeframe dashboard,
+// via request.security — keeps each request.security call simple/robust
+f_biasOnly(len) =>
+    var float swingHigh = na
+    var float swingLow  = na
+    var int   bias       = 0
+    ph = ta.pivothigh(high, len, len)
+    pl = ta.pivotlow(low, len, len)
+    if not na(ph)
+        swingHigh := ph
+    if not na(pl)
+        swingLow := pl
+    if not na(swingHigh) and close > swingHigh
+        bias := 1
+        swingHigh := na
+    if not na(swingLow) and close < swingLow
+        bias := -1
+        swingLow := na
+    bias
+
+dailyBias  = request.security(syminfo.tickerid, "D", f_biasOnly(biasPivotLen))
+weeklyBias = request.security(syminfo.tickerid, "W", f_biasOnly(biasPivotLen))
+hourlyBias = request.security(syminfo.tickerid, "60", f_biasOnly(biasPivotLen))
+
+tradeBias = primaryBiasTF == "W" ? weeklyBias : primaryBiasTF == "60" ? hourlyBias : dailyBias
+
+// On-chart structure labels, computed directly on this chart's own timeframe
+// (not via security) — purely visual, doesn't affect trading logic.
+[chartBias, chartEvt, chartEvtPrice] = f_structure(biasPivotLen)
+
+if showStructureOnChart and barstate.isconfirmed and chartEvt != 0
+    isUp = chartEvt == 1 or chartEvt == 3
+    isChoCH = chartEvt == 3 or chartEvt == 4
+    txt = isChoCH ? "CHoCH" : "BOS"
+    col = isUp ? colBull : colBear
+    label.new(bar_index, chartEvtPrice, txt, style = isUp ? label.style_label_down : label.style_label_up, color = color.new(color.white, 100), textcolor = col, size = size.tiny)
+
+// ---------------------------------------------------------------------------
+// Dashboard — top-right table, Daily / Weekly / Hourly bias
+// ---------------------------------------------------------------------------
+f_biasText(b) => b == 1 ? "Bullish" : b == -1 ? "Bearish" : "Neutral"
+f_biasColor(b) => b == 1 ? colBull : b == -1 ? colBear : color.gray
+
+var table dash = table.new(position.top_right, 2, 4, border_width = 1, border_color = color.new(color.gray, 50))
+
+if barstate.islast
+    table.cell(dash, 0, 0, "Timeframe", bgcolor = color.new(color.gray, 70), text_color = color.white, text_size = size.small)
+    table.cell(dash, 1, 0, "Bias", bgcolor = color.new(color.gray, 70), text_color = color.white, text_size = size.small)
+    table.cell(dash, 0, 1, "Daily", bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(dash, 1, 1, f_biasText(dailyBias), bgcolor = color.new(color.black, 60), text_color = f_biasColor(dailyBias), text_size = size.small)
+    table.cell(dash, 0, 2, "Weekly", bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(dash, 1, 2, f_biasText(weeklyBias), bgcolor = color.new(color.black, 60), text_color = f_biasColor(weeklyBias), text_size = size.small)
+    table.cell(dash, 0, 3, "Hourly", bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(dash, 1, 3, f_biasText(hourlyBias), bgcolor = color.new(color.black, 60), text_color = f_biasColor(hourlyBias), text_size = size.small)
+
+// ---------------------------------------------------------------------------
+// QQE — RSI smoothed with an ATR-of-RSI trailing band; a cross of the
+// smoothed RSI over/under its own trailing band is the entry trigger.
+// ---------------------------------------------------------------------------
+rsiVal   = ta.rsi(close, rsiLen)
+rsiMa    = ta.ema(rsiVal, rsiSmooth)
+atrRsi   = math.abs(rsiMa[1] - rsiMa)
+wilders  = rsiLen * 2 - 1
+maAtrRsi = ta.ema(atrRsi, wilders)
+deltaFastAtrRsi = ta.ema(maAtrRsi, wilders) * qqeFactor
+
+var float longBand  = 0.0
+var float shortBand = 0.0
+var int   qqeTrend   = 1
+
+newLongBand  = rsiMa - deltaFastAtrRsi
+newShortBand = rsiMa + deltaFastAtrRsi
+
+longBand  := (rsiMa[1] > longBand[1] and rsiMa > longBand[1]) ? math.max(longBand[1], newLongBand) : newLongBand
+shortBand := (rsiMa[1] < shortBand[1] and rsiMa < shortBand[1]) ? math.min(shortBand[1], newShortBand) : newShortBand
+
+qqeTrend := ta.cross(rsiMa, shortBand[1]) ? 1 : ta.cross(longBand[1], rsiMa) ? -1 : nz(qqeTrend[1], 1)
+
+fastAtrRsiTL = qqeTrend == 1 ? longBand : shortBand
+
+qqeCrossUp   = ta.crossover(rsiMa, fastAtrRsiTL)
+qqeCrossDown = ta.crossunder(rsiMa, fastAtrRsiTL)
+
+// no-painting: only treat a cross as real once its bar has actually closed
+qqeLongSignal  = qqeCrossUp and barstate.isconfirmed
+qqeShortSignal = qqeCrossDown and barstate.isconfirmed
+
+// ---------------------------------------------------------------------------
+// Combine bias + QQE signal + no-reentry guard
+// ---------------------------------------------------------------------------
+alignedOk = not requireAlign or (dailyBias == weeklyBias and weeklyBias == hourlyBias and dailyBias != 0)
+
+canLong  = alignedOk and tradeBias == 1
+canShort = alignedOk and tradeBias == -1
+
+longCondition  = qqeLongSignal  and canLong  and strategy.position_size <= 0
+shortCondition = qqeShortSignal and canShort and strategy.position_size >= 0
+
+if longCondition
+    strategy.entry("Long", strategy.long)
+if shortCondition
+    strategy.entry("Short", strategy.short)
+
+plotshape(longCondition, style = shape.triangleup, location = location.belowbar, color = colBull, size = size.small, title = "Long Entry")
+plotshape(shortCondition, style = shape.triangledown, location = location.abovebar, color = colBear, size = size.small, title = "Short Entry")
+
+alertcondition(longCondition, "Long Entry", "{{ticker}} long entry @ {{close}}")
+alertcondition(shortCondition, "Short Entry", "{{ticker}} short entry @ {{close}}")
+
+// ---------------------------------------------------------------------------
+// Exits — ATR trailing stop always active; optional early exits
+// ---------------------------------------------------------------------------
+atrVal = ta.atr(atrLen)
+
+var float longStopLevel  = na
+var float shortStopLevel = na
+
+if strategy.position_size > 0
+    newStop = close - atrVal * stopAtrMult
+    longStopLevel := na(longStopLevel) ? newStop : math.max(longStopLevel, newStop)
+else
+    longStopLevel := na
+
+if strategy.position_size < 0
+    newStop = close + atrVal * stopAtrMult
+    shortStopLevel := na(shortStopLevel) ? newStop : math.min(shortStopLevel, newStop)
+else
+    shortStopLevel := na
+
+if strategy.position_size > 0
+    strategy.exit("Long Exit", "Long", stop = longStopLevel)
+if strategy.position_size < 0
+    strategy.exit("Short Exit", "Short", stop = shortStopLevel)
+
+if exitOnFlip and strategy.position_size > 0 and qqeShortSignal
+    strategy.close("Long", comment = "QQE flip")
+if exitOnFlip and strategy.position_size < 0 and qqeLongSignal
+    strategy.close("Short", comment = "QQE flip")
+
+if exitOnBias and strategy.position_size > 0 and tradeBias == -1
+    strategy.close("Long", comment = "Bias flip")
+if exitOnBias and strategy.position_size < 0 and tradeBias == 1
+    strategy.close("Short", comment = "Bias flip")
+
+// ---------------------------------------------------------------------------
+// Plot the trailing stop for visual reference
+// ---------------------------------------------------------------------------
+plot(strategy.position_size > 0 ? longStopLevel : strategy.position_size < 0 ? shortStopLevel : na, title = "Trailing Stop", color = color.new(color.yellow, 0), style = plot.style_circles)

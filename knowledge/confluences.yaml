@@ -18,6 +18,14 @@
 # (midnight-deviation-method.md, ote-method.md) are kept for reference, not deleted, in case any
 # of it turns out useful later — but they are no longer part of the active model.
 #
+# 2026-08-19 (yet later same day): THIRD pivot — dropped the entire ICT confluence-clustering
+# approach too, in favor of a much simpler Trend Bias + QQE model (structure sets HTF bias, QQE
+# crossovers trigger entries in that direction). Every entry below is now `deprecated` except
+# market_structure and change_of_structure, which remain the basis for bias detection. This whole
+# file is now mostly historical reference from the ICT-clustering phase — see
+# model-overview.md "Current direction" for the live model and
+# pinescript/trend-bias-qqe-strategy.pine for the implementation.
+#
 # Fields:
 #   id          - short stable identifier (used in pinescript/backtests, don't rename casually)
 #   name        - human readable name
@@ -98,7 +106,7 @@ confluences:
       Previous session's authority/liquidity levels — prior day/session highs and lows — used
       as HTF reference points for where price is likely drawn to or reacts from.
     weight: 50
-    status: testing
+    status: deprecated
     notes: []
 
   - id: fair_value_gap
@@ -109,7 +117,7 @@ confluences:
       Standard ICT FVG — a 3-candle imbalance left in price. Used both as an HTF area of interest
       and refined down through the timeframe ladder.
     weight: 50
-    status: testing
+    status: deprecated
     notes: []
 
   - id: inverse_fair_value_gap
@@ -120,7 +128,7 @@ confluences:
       An FVG that has been violated/flipped and now acts as support/resistance in the opposite
       direction of its original polarity.
     weight: 50
-    status: testing
+    status: deprecated
     notes: []
 
   - id: balanced_price_range
@@ -131,7 +139,7 @@ confluences:
       Overlap of two opposing FVGs (one bullish, one bearish) left behind by a sharp move and
       reversal — treated as a high-probability reaction zone.
     weight: 50
-    status: testing
+    status: deprecated
     notes: []
 
   - id: rejection_block
@@ -142,7 +150,7 @@ confluences:
       Zone marked by long wicks rejecting a level, showing where aggressive buying/selling
       pressure previously stepped in.
     weight: 50
-    status: testing
+    status: deprecated
     notes: []
 
   - id: order_block
@@ -153,7 +161,7 @@ confluences:
       Last opposing candle before a significant/impulsive move — classic ICT order block, used
       as an area where large orders are presumed to sit.
     weight: 50
-    status: testing
+    status: deprecated
     notes: []
 
   - id: volume_spike_reaction
@@ -166,7 +174,7 @@ confluences:
       deviation aligns with a refined confluence zone. Without this reaction, no entry is taken
       even if the levels line up.
     weight: 60
-    status: testing
+    status: deprecated
     notes:
       - "2026-08-19: this is the actual entry trigger per the trader, not just a supporting
          confluence — weighted above neutral pending backtest data."
@@ -180,7 +188,7 @@ confluences:
       confluence zones around the trade, or on signs of price reversing against the position.
       This governs trade management, not entry.
     weight: 50
-    status: testing
+    status: deprecated
     notes:
       - "2026-08-19: originally framed around midnight-deviation levels specifically; reworded
          after midnight_deviation was deprecated. The general principle (manage exits against
@@ -213,7 +221,7 @@ confluences:
       approach not yet decided (manual high-impact time input vs. known recurring schedule vs.
       external feed). See midnight-deviation-method.md "Do not trade news" section.
     weight: 80
-    status: testing
+    status: deprecated
     notes:
       - "2026-08-19: trader stresses this 'again and again' — weighted high as a hard filter, not
          a soft-scored confluence, even though the field/schema treats all entries uniformly for
@@ -246,7 +254,7 @@ confluences:
       for PL/PH confirmation instead of entering on first touch raises probability. See
       ict-glossary.md.
     weight: 50
-    status: testing
+    status: deprecated
     notes:
       - "2026-08-19: source material calls this one of the highest-probability entry models, but
          also explicitly not a standalone decider — still requires correct premium/discount
@@ -262,7 +270,7 @@ confluences:
       (old support becomes resistance, or vice versa). High-probability continuation area after a
       shift in order flow. See ict-glossary.md.
     weight: 50
-    status: testing
+    status: deprecated
     notes: []
 
   - id: breaker_block
@@ -274,7 +282,7 @@ confluences:
       pattern as IFVG/IRB. Strong continuation entry after a change in market structure. See
       ict-glossary.md.
     weight: 50
-    status: testing
+    status: deprecated
     notes: []
 
   - id: change_of_structure
@@ -307,7 +315,7 @@ confluences:
       than assuming the first breakout is valid. Used to validate breakout direction before
       looking for continuation entries into PDAs. See ict-glossary.md.
     weight: 50
-    status: testing
+    status: deprecated
     notes: []
 
   - id: short_term_high_low
@@ -319,7 +327,7 @@ confluences:
       exceed. Creates short-term liquidity (stops cluster above STH / below STL). More
       significant near a PDA or premium/discount zone. See ict-glossary.md.
     weight: 50
-    status: testing
+    status: deprecated
     notes: []
 
   - id: intermediate_term_high_low
@@ -331,7 +339,7 @@ confluences:
       low with STLs on both sides (ITL). Represents a larger liquidity pool than a single STH/STL.
       See ict-glossary.md.
     weight: 50
-    status: testing
+    status: deprecated
     notes:
       - "2026-08-19: reference diagram shows a further tier above this — Long-Term High/Low
          (LTH/LTL), built from multiple ITH/ITL the same way ITH/ITL is built from STH/STL. Not
@@ -347,7 +355,7 @@ confluences:
       a significant low (SSL). Price often expands toward ERL to take those stops, then reverses
       or continues depending on context. See ict-glossary.md.
     weight: 50
-    status: testing
+    status: deprecated
     notes: []
 
   - id: internal_range_liquidity
@@ -358,7 +366,7 @@ confluences:
       Liquidity resting inside a defined range — at STHs, STLs, minor swing points, equal
       highs/lows. Often taken as a step toward external liquidity. See ict-glossary.md.
     weight: 50
-    status: testing
+    status: deprecated
     notes: []
 
   - id: premium_discount_zone
@@ -369,7 +377,7 @@ confluences:
       Range split at the 50% equilibrium level. Upper half = Premium (look for shorts at a
       bearish PDA); lower half = Discount (look for longs at a bullish PDA). See ict-glossary.md.
     weight: 50
-    status: testing
+    status: deprecated
     notes:
       - "2026-08-19: trader gave this as an unconditional hard rule — 'NEVER SELL IN DISCOUNT,
          NEVER BUY IN PREMIUM. NO EXCEPTIONS.' Weight left at default per instruction to defer
