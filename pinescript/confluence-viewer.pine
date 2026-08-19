@@ -156,9 +156,11 @@ bucketSize = pocBucketTicks * tick
 f_pocAddBar(price, vol) =>
     key = math.round(price / bucketSize) * bucketSize
     idx = -1
-    for k = 0 to array.size(pocBucketPrice) - 1
-        if array.get(pocBucketPrice, k) == key
-            idx := k
+    n = array.size(pocBucketPrice)
+    if n > 0
+        for k = 0 to n - 1
+            if array.get(pocBucketPrice, k) == key
+                idx := k
     if idx >= 0
         array.set(pocBucketVol, idx, array.get(pocBucketVol, idx) + vol)
     else
