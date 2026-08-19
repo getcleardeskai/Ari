@@ -17,6 +17,8 @@ needs to be re-explained between sessions, and no manual GitHub work is required
 
 - `knowledge/model-overview.md` — the core framework: how the midnight level/deviation and
   multi-timeframe confluence scaling fit together.
+- `knowledge/midnight-deviation-method.md` — the exact mechanics for marking the midnight
+  deviation (5-minute candle + fib method, including variant cases).
 - `knowledge/confluences.yaml` — the living, weighted list of individual confluences (what they
   are, what timeframe they're drawn from, current weight/importance, status). This is the file
   that changes most often as we test and re-rank confluences.

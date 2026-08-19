@@ -2,53 +2,145 @@
 #
 # This is the living list of individual confluences that feed the model. Edit weights/status
 # freely as we backtest — that's the whole point of this file being separate from the prose
-# overview in model-overview.md.
+# overview in model-overview.md. Terminology is ICT (Inner Circle Trader) style.
 #
 # Fields:
 #   id          - short stable identifier (used in pinescript/backtests, don't rename casually)
 #   name        - human readable name
-#   category    - "anchor" (midnight level/deviation), "htf" (higher-timeframe zone),
-#                 "ltf" (lower-timeframe refinement), or "filter" (context/no-trade condition)
+#   category    - "anchor" (midnight level/deviation), "bias" (structure/trend, sets directional
+#                 bias), "htf" (higher-timeframe zone), "ltf" (lower-timeframe refinement),
+#                 "trigger" (entry-trigger condition), or "filter" (context/no-trade condition)
 #   timeframe   - timeframe(s) this confluence is drawn on
 #   description - what it is / how it's identified
 #   weight      - 0-100, current importance in the model (start at 50 = unranked/neutral)
 #   status      - active | testing | disabled | deprecated
-#   notes       - free-form, running commentary (what we've observed testing it)
+#   notes       - free-form, running commentary (what we've observed testing it), each entry
+#                 dated
 
 version: 1
-last_updated: null  # set on next real edit
+last_updated: 2026-08-19
 
 confluences:
   - id: midnight_deviation
     name: Midnight Deviation
     category: anchor
-    timeframe: intraday (from 00:00 open)
+    timeframe: 5m (marked at/after 00:00)
     description: >
-      Price's deviation away from the midnight open level. Acts as the primary timing/anchor
-      mechanism for entries — the model looks for this to align with a refined confluence zone.
+      Price's deviation away from the midnight open level, marked using the 5-minute candle
+      method described in midnight-deviation-method.md. Acts as the primary timing/anchor
+      mechanism for entries — the model looks for this to align with a refined, scaled-down
+      confluence zone.
     weight: 50
     status: testing
-    notes: []
+    notes:
+      - "2026-08-19: full marking method has multiple cases (single reversal candle vs. a run of
+         several same-color candles before the shift) — see midnight-deviation-method.md. Method
+         still needs a worked chart example from the trader to fully lock in."
 
-  - id: htf_confluence_zone
-    name: Higher-Timeframe Confluence Zone
+  - id: market_structure
+    name: Market Structure (Bias / BOS / CHoCH)
+    category: bias
+    timeframe: primarily Daily, referenced down the ladder
+    description: >
+      Break of Structure (BOS) and Change of Character (CHoCH) used to determine current trend
+      and directional bias before looking for entries. E.g. a daily timeframe in a sustained
+      uptrend sets a bullish bias for the top-down search.
+    weight: 70
+    status: testing
+    notes:
+      - "2026-08-19: trader called this out as probably the single biggest factor since it sets
+         bias for everything else — starting weight set above neutral (50) on that basis, pending
+         actual backtest evidence."
+
+  - id: previous_session_liquidity
+    name: Previous Session High/Low (Liquidity)
     category: htf
-    timeframe: TBD (large timeframe, e.g. Weekly/Daily — confirm)
+    timeframe: Daily (previous day/session reference)
     description: >
-      Placeholder — an area on a larger timeframe identified as having significant historical
-      buying or selling pressure. Needs the specific tool(s)/definition (e.g. order block, FVG,
-      liquidity pool, prior day/week high-low, volume profile node, etc.) filled in.
+      Previous session's authority/liquidity levels — prior day/session highs and lows — used
+      as HTF reference points for where price is likely drawn to or reacts from.
     weight: 50
     status: testing
     notes: []
 
-  - id: ltf_refined_zone
-    name: Lower-Timeframe Refined Zone
-    category: ltf
-    timeframe: TBD (progressively smaller TFs used to scale down htf_confluence_zone)
+  - id: fair_value_gap
+    name: Fair Value Gap (FVG)
+    category: htf
+    timeframe: ladder (Daily -> 4H -> 1H -> 45m -> 30m -> 15m -> 5m)
     description: >
-      Placeholder — the result of scaling an htf_confluence_zone down through smaller timeframes
-      to tighten it into a precise entry area.
+      Standard ICT FVG — a 3-candle imbalance left in price. Used both as an HTF area of interest
+      and refined down through the timeframe ladder.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: inverse_fair_value_gap
+    name: Inverse Fair Value Gap (iFVG)
+    category: htf
+    timeframe: ladder (Daily -> 4H -> 1H -> 45m -> 30m -> 15m -> 5m)
+    description: >
+      An FVG that has been violated/flipped and now acts as support/resistance in the opposite
+      direction of its original polarity.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: balanced_price_range
+    name: Balanced Price Range (BPR)
+    category: htf
+    timeframe: ladder (Daily -> 4H -> 1H -> 45m -> 30m -> 15m -> 5m)
+    description: >
+      Overlap of two opposing FVGs (one bullish, one bearish) left behind by a sharp move and
+      reversal — treated as a high-probability reaction zone.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: rejection_block
+    name: Rejection Block
+    category: htf
+    timeframe: ladder (Daily -> 4H -> 1H -> 45m -> 30m -> 15m -> 5m)
+    description: >
+      Zone marked by long wicks rejecting a level, showing where aggressive buying/selling
+      pressure previously stepped in.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: order_block
+    name: Order Block
+    category: htf
+    timeframe: ladder (Daily -> 4H -> 1H -> 45m -> 30m -> 15m -> 5m)
+    description: >
+      Last opposing candle before a significant/impulsive move — classic ICT order block, used
+      as an area where large orders are presumed to sit.
+    weight: 50
+    status: testing
+    notes: []
+
+  - id: volume_spike_reaction
+    name: Volume Spike Reaction at Level
+    category: trigger
+    timeframe: entry timeframe (5m or lower, TBD)
+    description: >
+      There is no fixed R:R entry rule in this model. Instead, the actual trigger to enter is an
+      immediate, high-volume spike/reaction occurring at or around a level where the midnight
+      deviation aligns with a refined confluence zone. Without this reaction, no entry is taken
+      even if the levels line up.
+    weight: 60
+    status: testing
+    notes:
+      - "2026-08-19: this is the actual entry trigger per the trader, not just a supporting
+         confluence — weighted above neutral pending backtest data."
+
+  - id: exit_htf_support_resistance
+    name: Exit via Other Midnight-Deviation Levels / HTF S&R
+    category: filter
+    timeframe: HTF + midnight-deviation levels
+    description: >
+      No fixed take-profit rule. Exit is managed against other midnight deviation levels and
+      broader higher-timeframe support/resistance around the trade, or on signs of price
+      reversing against the position. This governs trade management, not entry.
     weight: 50
     status: testing
     notes: []
