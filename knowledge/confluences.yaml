@@ -44,6 +44,12 @@ confluences:
          tool (not two), and the level meaning: 1 to -2.5 = pullback/S-R zone, -3.25 to -5 =
          reversion/big-move zone. Only remaining blockers are the 00:00 timezone/session
          definition and the trend-day variant. Once those close, this is ready for Pine Script."
+      - "2026-08-19: there is a second, more discretionary way to draw this — 'Method B',
+         off a manipulation leg (higher-low/lower-high before or after a big move at midnight)
+         instead of the candle-run high/low. See midnight-deviation-method.md. Also: higher
+         levels = higher probability but this is explicitly discretionary (e.g. trader passed on
+         a 'perfect' -5 level because of concerning pre-level volume) — do not treat as a pure
+         mechanical trigger."
 
   - id: market_structure
     name: Market Structure (Bias / BOS / CHoCH)
@@ -152,5 +158,53 @@ confluences:
     weight: 50
     status: testing
     notes: []
+
+  - id: ote
+    name: OTE (Optimal Trade Entry)
+    category: ltf
+    timeframe: drawn on whatever swing leg is judged relevant (session highs/lows, e.g. NY AM)
+    description: >
+      ICT-style fib retracement drawn across a swing low-to-high (or reversed), used to refine
+      entries to a tight point, ideally where it lines up ("connects") with a midnight deviation
+      level or another confluence (e.g. a rejection block's 0.5). See ote-method.md for full
+      detail — swing-point selection is highly discretionary.
+    weight: 55
+    status: testing
+    notes:
+      - "2026-08-19: trader-supplied probability ranking is 0.78 (highest) > 0.66/0.7 > 0.62
+         (lowest) — note this differs from textbook ICT convention (0.62 sweet spot); we go with
+         the trader's own field-data ranking. Flagged as the hardest confluence to automate
+         cleanly since swing-point selection is pure discretion — see ote-method.md."
+
+  - id: news_filter
+    name: No-News Filter
+    category: filter
+    timeframe: n/a (time-based blackout)
+    description: >
+      Hard no-trade rule around news events — repeatedly stressed by the trader. Implementation
+      approach not yet decided (manual high-impact time input vs. known recurring schedule vs.
+      external feed). See midnight-deviation-method.md "Do not trade news" section.
+    weight: 80
+    status: testing
+    notes:
+      - "2026-08-19: trader stresses this 'again and again' — weighted high as a hard filter, not
+         a soft-scored confluence, even though the field/schema treats all entries uniformly for
+         now. Revisit whether filter-category confluences need a separate 'hard block' mechanism
+         distinct from the 0-100 weight scale used for scoring confluences."
+
+  - id: volume_expansion_pattern
+    name: Small Drawdown / Large Expansion Pattern
+    category: filter
+    timeframe: entry timeframe (5m or lower)
+    description: >
+      Observed pattern where a relatively small adverse move (drawdown) at a level precedes a
+      much larger expansion move — associated with high-volume/news-driven conditions. Example
+      data points: ~15 tick drawdown -> ~500 tick expansion (midnight dev alone); ~5 tick
+      drawdown -> ~700 tick expansion (OTE + rejection block 0.5 confluence). Anecdotal so far —
+      log dated instances in examples.md as they occur.
+    weight: 50
+    status: testing
+    notes:
+      - "2026-08-19: only two anecdotal data points so far, not yet statistically validated."
 
 # Add new confluences below as they're defined. Keep ids lowercase_snake_case.

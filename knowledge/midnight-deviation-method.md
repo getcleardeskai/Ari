@@ -44,6 +44,49 @@ identical in method.)*
   later — **not yet specified**. Do not assume the base-case method applies unmodified on trend
   days.
 
+## Method B — Manipulation Leg (2026-08-19, more discretionary)
+
+There are **two** valid ways to draw the midnight deviation. Everything above (base case +
+extended/chained-candle case) is **Method A**. There is also **Method B**:
+
+- A **manipulation leg** is the higher-low (in a bullish context) or lower-high (in a bearish
+  context) that forms right before or after a large move at/around midnight.
+- Draw the same fib-ladder tool off the two points of that leg instead of off the candle-run high/
+  low used in Method A.
+- This is explicitly called out as **more discretionary** than Method A — identifying what counts
+  as "the" manipulation leg (vs. just noise) requires judgment, not a fixed rule. Treat this as a
+  harder confluence to automate cleanly; may need a scoring/heuristic approach rather than a
+  strict detection rule, or may need to stay semi-manual longer than Method A.
+- Not yet specified: exactly when to prefer Method B over Method A on a given session — trader has
+  not yet given a rule for which method applies when. **Open question**, do not assume a default.
+
+## Level significance & discretion
+
+- General rule: **the higher the level number, the higher the probability** (i.e. -3.25 through
+  -5 the reversion band are read as higher probability than the -1 to -2.5 pullback band,
+  consistent with the level-meaning section below) — but application is **discretionary**, not a
+  hard automated trigger.
+- Worked example given by the trader: a session had a "perfect" setup at level **-5**, but in the
+  lead-up there was unusually high volume, so the trader deliberately waited for confirmation
+  (see `volume_spike_reaction` in `confluences.yaml`) rather than blindly entering — out of
+  concern the level would simply get blown through by that volume rather than reacting. Ended up
+  not taking the trade. This illustrates that **high pre-level volume can be a reason to withhold
+  entry**, not just a trigger to enter — i.e. the volume filter cuts both ways depending on
+  context, which is inherently discretionary and hard to reduce to one automated rule. Flag this
+  as a nuance to capture in backtesting notes rather than hard-code naively.
+
+## Do not trade news
+
+- Explicitly and repeatedly stressed by the trader (echoing their mentor): **never trade around
+  news events.** This should be an **automated filter** — see the `news_filter` confluence in
+  `confluences.yaml`. Implementation approach still TBD (Pine Script has no native news feed —
+  likely needs either a manual high-impact-news time input, a known recurring schedule e.g. FOMC/
+  NFP/CPI, or an external data feed/session blackout list).
+- Related pattern the trader described: a **small drawdown followed by a large expansion** around
+  a level (example given: ~15 tick drawdown followed by an almost 500 tick expansion) is
+  frequently associated with these high-volume/news-driven moves and "typically" precedes
+  incredible moves. See `volume_expansion_pattern` in `confluences.yaml`.
+
 ## Confirmed from chart example (2026-08-19, MNQ1! 5m, TradingView)
 
 Trader supplied a live chart + the exact Fib Retracement tool dialog used to mark the deviation.
@@ -123,6 +166,11 @@ automated in Pine Script instead of using the interactive tool at all.
 - [ ] Trend-day variant of the marking method.
 - [ ] Per-level weighting within `midnight_deviation` (pullback band vs. reversion band) —
       pending backtest data.
+- [ ] When Method A (candle-run) vs. Method B (manipulation leg) applies — no rule given yet for
+      which to use on a given session.
+- [ ] How to systematically identify a "manipulation leg" for Method B (currently pure
+      discretion).
+- [ ] News-event detection/blackout implementation approach for `news_filter`.
 
 ## Resolved (previously open, now confirmed 2026-08-19)
 

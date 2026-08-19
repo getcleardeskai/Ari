@@ -19,6 +19,10 @@ needs to be re-explained between sessions, and no manual GitHub work is required
   multi-timeframe confluence scaling fit together.
 - `knowledge/midnight-deviation-method.md` — the exact mechanics for marking the midnight
   deviation (5-minute candle + fib method, including variant cases).
+- `knowledge/ote-method.md` — the Optimal Trade Entry fib method used to refine entries further,
+  including its (highly discretionary) swing-point selection.
+- `knowledge/automation-requirements.md` — functional requirements for the eventual bot: alerting
+  behavior, confidence scoring, thresholds.
 - `knowledge/confluences.yaml` — the living, weighted list of individual confluences (what they
   are, what timeframe they're drawn from, current weight/importance, status). This is the file
   that changes most often as we test and re-rank confluences.
