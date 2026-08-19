@@ -50,6 +50,11 @@ confluences:
          levels = higher probability but this is explicitly discretionary (e.g. trader passed on
          a 'perfect' -5 level because of concerning pre-level volume) — do not treat as a pure
          mechanical trigger."
+      - "2026-08-19: level ladder updated/expanded to 16 levels (was 10) — now
+         1, 0.705, 0.5, 0, -1, -1.5, -2, -2.25, -2.5, -3, -3.25, -3.5, -4, -4.25, -4.5, -5.
+         Pullback zone extended to 1..-2.5, reversion zone is -3..-5. See
+         midnight-deviation-method.md for the current authoritative table (supersedes the
+         original 10-level version noted above)."
 
   - id: market_structure
     name: Market Structure (Bias / BOS / CHoCH)

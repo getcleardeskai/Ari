@@ -120,39 +120,51 @@ automated in Pine Script instead of using the interactive tool at all.
 - **Reverse:** ON
 - **Fib levels based on log scale:** OFF
 - **Use one color:** ON (single bicolor swatch — red/teal, bearish/bullish)
-- **Levels (Style tab), enabled/checked only** — all other stock levels (0.5, 0.618, 0.75, 1.272,
-  1.618, 2.272, 3.618, etc.) are left **unchecked/disabled**:
+- **Levels (Style tab), enabled/checked only** — all other stock levels (0.618, 0.75, 1.272,
+  1.618, 2.272, 3.618, etc.) are left **unchecked/disabled**. **Updated 2026-08-19 (second
+  screenshot batch)** — trader supplied a more granular level set than the first pass; this
+  supersedes the original 10-level list:
 
   | Level | Enabled |
   |-------|---------|
   | 1     | ✅ |
+  | 0.705 | ✅ |
+  | 0.5   | ✅ |
   | 0     | ✅ |
   | -1    | ✅ |
+  | -1.5  | ✅ |
   | -2    | ✅ |
+  | -2.25 | ✅ |
   | -2.5  | ✅ |
+  | -3    | ✅ |
   | -3.25 | ✅ |
   | -3.5  | ✅ |
   | -4    | ✅ |
+  | -4.25 | ✅ |
   | -4.5  | ✅ |
   | -5    | ✅ |
 
-  So the tool projects a ladder of negative extension levels below/beyond the 0–1 anchor range —
-  not a classic 0.5/0.618 retracement.
-- Labels: Left-aligned, Values shown, font size 12.
+  So the tool projects a ladder of extension levels above and below the 0–1 anchor range —
+  not a classic single 0.5/0.618 retracement, but also not purely negative-only as the first
+  version suggested (0.705 and 0.5 sit between 0 and 1). Original (now superseded) list was:
+  1, 0, -1, -2, -2.5, -3.25, -3.5, -4, -4.5, -5 — kept here for history; the 16-level table above
+  is current.
+- Labels: Right-aligned (updated from Left-aligned in the first pass), Values shown, font size 12.
 
 ### What each level means (trader's read, 2026-08-19)
 
-- **Levels 1 through ~2.5** ("1" through "-2.5"): **pullback zone** — areas where price can pull
-  back / minor support-resistance reactions, not necessarily the big move.
-- **Levels -3.25, -3.5, -4, -4.5, -5**: **reversion zone** — where the trader is looking for the
-  actual big reversion move.
+- **Levels 1 through ~-2.5** (i.e. 1, 0.705, 0.5, 0, -1, -1.5, -2, -2.25, -2.5): **pullback zone**
+  — areas where price can pull back / minor support-resistance reactions, not necessarily the big
+  move.
+- **Levels -3, -3.25, -3.5, -4, -4.25, -4.5, -5**: **reversion zone** — where the trader is
+  looking for the actual big reversion move.
 - Reactions are typically visible at **each** individual level, whether or not it lines up with
   another confluence — i.e. these levels have some standalone predictive value, and stacking
   other confluence on top of one just increases confidence/precision, per the original "alignment
   = tight entry" framework in `model-overview.md`.
 - **Not yet quantified:** exact per-level weight. The pullback-vs-reversion split above gives a
-  first-pass grouping — reasonable starting point is weighting the -3.25 to -5 band higher for
-  the "big move" 1:6–1:10 setups this model is built around, and the 1–2.5 band lower/as a
+  first-pass grouping — reasonable starting point is weighting the -3 to -5 band higher for the
+  "big move" 1:6–1:10 setups this model is built around, and the 1 to -2.5 band lower/as a
   secondary pullback signal. To be tuned via backtesting.
 
 ## Open questions (do not build/automate around these until confirmed)
@@ -191,8 +203,9 @@ place the fib tool by hand every session). The math is now fully specified:
    opposite-color candle breaks the chain (per the resolved logic above).
 2. Anchor 0 = near wick, anchor 1 = far wick, using the run's boundary candles.
 3. Compute `level_price = anchor0 + (anchor1 - anchor0) * ratio` for each ratio in
-   `[1, 0, -1, -2, -2.5, -3.25, -3.5, -4, -4.5, -5]` and plot as horizontal lines — no need to use
-   TradingView's interactive Fib Retracement tool at all once this is in Pine Script.
+   `[1, 0.705, 0.5, 0, -1, -1.5, -2, -2.25, -2.5, -3, -3.25, -3.5, -4, -4.25, -4.5, -5]` and plot
+   as horizontal lines — no need to use TradingView's interactive Fib Retracement tool at all
+   once this is in Pine Script.
 
 Remaining blockers before coding this are just the timezone/session definition and the trend-day
 variant, both still open above.
