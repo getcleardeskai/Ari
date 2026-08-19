@@ -1,0 +1,242 @@
+//@version=6
+// ============================================================================
+// Auto Reversion Strategy
+//
+// Mean-reversion half of the two-strategy plan (see
+// ../knowledge/automation-architecture.md and ../knowledge/strategies/mean-reversion.md
+// for full rules/context). Trades price reverting from the outer edge of an
+// MRC-style channel back toward it, filtered by a 200 MA bias check and a
+// volume confirmation window, triggered by QQE.
+//
+// Rules implemented (long case; short is the exact mirror):
+//   1. BIAS   : 200 MA fully below the entire MRC band (below even its most
+//               extreme lower band).
+//   2. LOCATION: the setup candle's low tags the "entry band" level of the
+//               MRC (default: outermost band) — this is what "overextended"
+//               means here.
+//   3. SIGNAL : a QQE long cross.
+//   4. VOLUME : volume >= its own average, either on the signal bar or
+//               within the next few bars after it (configurable window). No
+//               confirmation within that window = the setup is invalidated.
+//   5. TIMING : entries only fire on a CONFIRMED bar close, never mid-bar.
+//
+// IMPORTANT CAVEAT: "MRC" (the outward gradient band) is not a Pine
+// built-in — its exact formula/settings are unknown here, so this script
+// APPROXIMATES it as a basis line + 3 ATR-scaled bands. Compare the plotted
+// bands against your real MRC indicator and adjust basisLen/mrcAtrLen/the
+// band multiples until they line up. Several other specifics (which band
+// level is the TP target, the volume confirmation window length, fixed vs.
+// swing-based stop) are also open per the trader's own notes — all exposed
+// as inputs with a documented default rather than hard-coded, specifically
+// so they're easy to correct.
+//
+// No painting (barstate.isconfirmed gating) and no re-entries (pyramiding=0
+// + position-size checks) follow the same pattern as trend-bias-qqe-strategy.pine.
+//
+// Hand-written, not run through TradingView's compiler on my end — if it
+// throws an error on first load, send the exact error text.
+// ============================================================================
+strategy("Auto Reversion Strategy", overlay = true, pyramiding = 0,
+     default_qty_type = strategy.percent_of_equity, default_qty_value = 10,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.5,
+     slippage = 1, calc_on_every_tick = false,
+     max_lines_count = 500, max_labels_count = 500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+grpMRC = "MRC (approximated)"
+basisLen   = input.int(20, "Basis length", minval = 1, group = grpMRC)
+mrcAtrLen  = input.int(14, "MRC ATR length", minval = 1, group = grpMRC)
+bandMult1  = input.float(1.0, "Band 1 (inner) x ATR", minval = 0.1, step = 0.1, group = grpMRC)
+bandMult2  = input.float(2.0, "Band 2 (mid) x ATR", minval = 0.1, step = 0.1, group = grpMRC)
+bandMult3  = input.float(3.0, "Band 3 (outer) x ATR", minval = 0.1, step = 0.1, group = grpMRC)
+entryBandLevel = input.int(3, "Entry/overextension band level (1-3)", minval = 1, maxval = 3, group = grpMRC)
+tpBandLevel    = input.int(2, "Take-profit band level (1-3)", minval = 1, maxval = 3, group = grpMRC)
+
+grpBias = "Bias (200 MA)"
+maLen = input.int(200, "Bias MA length", minval = 1, group = grpBias)
+
+grpVol = "Volume Confirmation"
+volAvgLen     = input.int(20, "Volume average length", minval = 1, group = grpVol)
+volConfirmBars = input.int(3, "Confirmation window (bars after signal)", minval = 0, group = grpVol)
+
+grpQQE = "QQE Entry Signal"
+rsiLen    = input.int(14, "RSI length", minval = 2, group = grpQQE)
+rsiSmooth = input.int(5, "RSI smoothing (EMA)", minval = 1, group = grpQQE)
+qqeFactor = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group = grpQQE)
+
+grpRisk = "Risk / Exit"
+useFixedStop = input.bool(true, "Use fixed-tick stop (off = last swing low/high)", group = grpRisk)
+stopTicks    = input.float(25, "Fixed stop (ticks)", minval = 1, group = grpRisk)
+swingLen     = input.int(5, "Swing lookback for swing-based stop", minval = 1, group = grpRisk)
+
+grpColor = "Colors"
+colBull = input.color(#089981, "Bullish color", group = grpColor)
+colBear = input.color(#f23645, "Bearish color", group = grpColor)
+
+tick = syminfo.mintick
+
+// ---------------------------------------------------------------------------
+// MRC approximation
+// ---------------------------------------------------------------------------
+basis  = ta.sma(hl2, basisLen)
+mrcAtr = ta.atr(mrcAtrLen)
+
+upper1 = basis + mrcAtr * bandMult1
+upper2 = basis + mrcAtr * bandMult2
+upper3 = basis + mrcAtr * bandMult3
+lower1 = basis - mrcAtr * bandMult1
+lower2 = basis - mrcAtr * bandMult2
+lower3 = basis - mrcAtr * bandMult3
+
+pUpper1 = plot(upper1, "MRC Upper 1", color = color.new(colBear, 70))
+pUpper2 = plot(upper2, "MRC Upper 2", color = color.new(colBear, 55))
+pUpper3 = plot(upper3, "MRC Upper 3", color = color.new(colBear, 40))
+pLower1 = plot(lower1, "MRC Lower 1", color = color.new(colBull, 70))
+pLower2 = plot(lower2, "MRC Lower 2", color = color.new(colBull, 55))
+pLower3 = plot(lower3, "MRC Lower 3", color = color.new(colBull, 40))
+plot(basis, "MRC Basis", color = color.new(color.gray, 30))
+fill(pUpper1, pUpper2, color = color.new(colBear, 88))
+fill(pUpper2, pUpper3, color = color.new(colBear, 82))
+fill(pLower1, pLower2, color = color.new(colBull, 88))
+fill(pLower2, pLower3, color = color.new(colBull, 82))
+
+f_bandAt(level, upperSide) =>
+    band = level == 1 ? (upperSide ? upper1 : lower1) : level == 2 ? (upperSide ? upper2 : lower2) : (upperSide ? upper3 : lower3)
+    band
+
+entryUpperBand = f_bandAt(entryBandLevel, true)
+entryLowerBand = f_bandAt(entryBandLevel, false)
+tpUpperBand    = f_bandAt(tpBandLevel, true)
+tpLowerBand    = f_bandAt(tpBandLevel, false)
+
+// ---------------------------------------------------------------------------
+// Bias — 200 MA fully below/above the entire (outermost) MRC band
+// ---------------------------------------------------------------------------
+maVal = ta.sma(close, maLen)
+plot(maVal, "Bias MA", color = color.new(color.white, 0), linewidth = 2)
+
+biasLongOk  = maVal < lower3
+biasShortOk = maVal > upper3
+
+// ---------------------------------------------------------------------------
+// Location — setup candle tags the entry band level
+// ---------------------------------------------------------------------------
+locationLongOk  = low <= entryLowerBand
+locationShortOk = high >= entryUpperBand
+
+// ---------------------------------------------------------------------------
+// QQE signal (same engine as trend-bias-qqe-strategy.pine)
+// ---------------------------------------------------------------------------
+rsiVal   = ta.rsi(close, rsiLen)
+rsiMa    = ta.ema(rsiVal, rsiSmooth)
+atrRsi   = math.abs(rsiMa[1] - rsiMa)
+wilders  = rsiLen * 2 - 1
+maAtrRsi = ta.ema(atrRsi, wilders)
+deltaFastAtrRsi = ta.ema(maAtrRsi, wilders) * qqeFactor
+
+var float longBand  = 0.0
+var float shortBand = 0.0
+var int   qqeTrend   = 1
+
+newLongBand  = rsiMa - deltaFastAtrRsi
+newShortBand = rsiMa + deltaFastAtrRsi
+
+longBand  := (rsiMa[1] > longBand[1] and rsiMa > longBand[1]) ? math.max(longBand[1], newLongBand) : newLongBand
+shortBand := (rsiMa[1] < shortBand[1] and rsiMa < shortBand[1]) ? math.min(shortBand[1], newShortBand) : newShortBand
+
+qqeTrend := ta.cross(rsiMa, shortBand[1]) ? 1 : ta.cross(longBand[1], rsiMa) ? -1 : nz(qqeTrend[1], 1)
+fastAtrRsiTL = qqeTrend == 1 ? longBand : shortBand
+
+qqeCrossUp   = ta.crossover(rsiMa, fastAtrRsiTL)
+qqeCrossDown = ta.crossunder(rsiMa, fastAtrRsiTL)
+
+qqeLongSignal  = qqeCrossUp and barstate.isconfirmed
+qqeShortSignal = qqeCrossDown and barstate.isconfirmed
+
+// ---------------------------------------------------------------------------
+// Volume confirmation
+// ---------------------------------------------------------------------------
+volAvg = ta.sma(volume, volAvgLen)
+volOk  = volume >= volAvg
+
+// ---------------------------------------------------------------------------
+// Setup state machine — a QQE+bias+location setup either confirms
+// immediately (volume already OK) or goes "pending" for up to
+// volConfirmBars additional bars waiting for volume to confirm.
+// ---------------------------------------------------------------------------
+var int pendingDir     = 0   // 0 none, 1 long pending, -1 short pending
+var int pendingBarsLeft = 0
+
+doLongEntry  = false
+doShortEntry = false
+
+if barstate.isconfirmed
+    newLongSetup  = qqeLongSignal  and biasLongOk  and locationLongOk
+    newShortSetup = qqeShortSignal and biasShortOk and locationShortOk
+
+    if newLongSetup
+        if volOk
+            doLongEntry := true
+            pendingDir := 0
+        else
+            pendingDir := 1
+            pendingBarsLeft := volConfirmBars
+    else if pendingDir == 1
+        if volOk
+            doLongEntry := true
+            pendingDir := 0
+        else
+            pendingBarsLeft -= 1
+            if pendingBarsLeft < 0
+                pendingDir := 0
+
+    if newShortSetup
+        if volOk
+            doShortEntry := true
+            pendingDir := 0
+        else
+            pendingDir := -1
+            pendingBarsLeft := volConfirmBars
+    else if pendingDir == -1
+        if volOk
+            doShortEntry := true
+            pendingDir := 0
+        else
+            pendingBarsLeft -= 1
+            if pendingBarsLeft < 0
+                pendingDir := 0
+
+// ---------------------------------------------------------------------------
+// Entries (no re-entry: pyramiding=0 + explicit position check)
+// ---------------------------------------------------------------------------
+longCondition  = doLongEntry  and strategy.position_size <= 0
+shortCondition = doShortEntry and strategy.position_size >= 0
+
+var float entryStop = na
+var float entryTP   = na
+
+swingLow  = ta.lowest(low, swingLen)
+swingHigh = ta.highest(high, swingLen)
+
+if longCondition
+    strategy.entry("Long", strategy.long)
+    entryStop := useFixedStop ? close - stopTicks * tick : swingLow[1]
+    entryTP   := tpUpperBand
+
+if shortCondition
+    strategy.entry("Short", strategy.short)
+    entryStop := useFixedStop ? close + stopTicks * tick : swingHigh[1]
+    entryTP   := tpLowerBand
+
+if strategy.position_size > 0
+    strategy.exit("Long Exit", "Long", stop = entryStop, limit = entryTP)
+if strategy.position_size < 0
+    strategy.exit("Short Exit", "Short", stop = entryStop, limit = entryTP)
+
+plotshape(longCondition, style = shape.triangleup, location = location.belowbar, color = colBull, size = size.small, title = "Long Entry")
+plotshape(shortCondition, style = shape.triangledown, location = location.abovebar, color = colBear, size = size.small, title = "Short Entry")
+
+alertcondition(longCondition, "Auto Reversion Long", "{{ticker}} Auto Reversion long entry @ {{close}}")
+alertcondition(shortCondition, "Auto Reversion Short", "{{ticker}} Auto Reversion short entry @ {{close}}")

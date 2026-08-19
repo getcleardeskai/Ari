@@ -1,8 +1,27 @@
 # Pine Script
 
-Strategies/indicators implementing the model from `../knowledge/model-overview.md`.
+Strategies/indicators implementing the model from `../knowledge/automation-architecture.md`.
 
-## `trend-bias-qqe-strategy.pine` — current focus
+## `auto-reversion-strategy.pine` — current focus
+
+Current focus (2026-08-19) — the mean-reversion half of the two-strategy plan (see
+`../knowledge/strategies/mean-reversion.md`). 200 MA bias filter + an approximated MRC-style
+multi-band channel (overextension) + QQE entry signal + a volume-vs-average confirmation window
+(with a "pending" grace period if volume doesn't confirm on the signal bar itself). ATR/tick stop,
+band-level take-profit.
+
+**Biggest caveat:** "MRC" isn't a Pine built-in — its exact formula is unknown here, so the bands
+are approximated (basis + 3 ATR-scaled levels). Compare against the real MRC on your chart and
+tune `basisLen`/`mrcAtrLen`/the band multiples until they line up before trusting the backtest
+numbers. Several other specifics (TP band level, volume confirmation window length, fixed vs.
+swing stop) are exposed as inputs with a documented default rather than hard-coded — see the
+file's own header comment.
+
+**How to use it:** TradingView → open an MNQ1! or NQ1! chart → Pine Editor → paste this file's
+contents → Add to Chart → Strategy Tester tab. Hand-written, not yet run through TradingView's
+compiler — send me the exact error text if it throws one on first load.
+
+## `trend-bias-qqe-strategy.pine` — other active strategy
 
 Current focus (2026-08-19) — full pivot away from ICT confluences entirely. This is a real,
 backtestable **strategy**: Daily/Weekly/Hourly bias computed from market structure (BOS =

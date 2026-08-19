@@ -76,10 +76,11 @@ live should be reproducible from the same rules in a backtest.
 
 ## Status
 
-- Mean reversion strategy: not yet formalized — see `strategies/mean-reversion.md`.
-- Trend strategy: **already has a first pass** — `pinescript/trend-bias-qqe-strategy.pine`
-  (structure-based bias + QQE entries) is exactly this kind of trend strategy, built before this
-  two-strategy framing was made explicit. Worth treating that file as the trend strategy's v1
-  rather than starting over — see `strategies/trend-following.md`.
+- **Auto Reversion** (mean reversion): rules captured, v1 built —
+  `pinescript/auto-reversion-strategy.pine`. See `strategies/mean-reversion.md`. Biggest open
+  item: the MRC band is approximated (exact formula unknown), needs visual verification against
+  the trader's real MRC indicator.
+- **Trend Following**: v1 built — `pinescript/trend-bias-qqe-strategy.pine` (structure-based bias
+  + QQE entries). See `strategies/trend-following.md`.
 - Combination layer: not started, intentionally deferred.
 - Live execution bot: not started, intentionally deferred until strategies are validated.
