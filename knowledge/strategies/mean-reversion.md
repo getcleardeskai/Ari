@@ -81,6 +81,24 @@ channel, a volume-vs-its-average check, QQE, close-confirmed entries, tick or st
 stops, band-level take-profit) is standard, buildable Pine. The only real open item is getting the
 MRC band math to actually match your specific indicator — everything else is mechanical.
 
+## 2026-08-19 — comparison against a simplified version, diagnostics added
+
+Trader shared a version (written elsewhere) that produced trades where the full port didn't.
+Diffed it directly: that version only implements 2 of the 5 rules (bias + QQE signal) — it drops
+the location filter (candle tagging the outer band) and the volume confirmation entirely, and
+uses a tighter outer-band multiplier (1.5 vs. the real MRC's default 2.415). That's why it fires
+more often — fewer, looser conditions — not because anything in the fuller port was broken. Worth
+being explicit: dropping volume confirmation means it would take the exact trade the trader
+called out as invalid (QQE signal with no volume behind it).
+
+Rather than pick a side, added to `../../pinescript/auto-reversion-strategy.pine`:
+- A **diagnostic funnel table** (bottom-left on the chart) counting how many confirmed bars pass
+  each stage — bias → +location → +QQE signal → +volume→entered — so it's possible to see exactly
+  where the funnel is choking instead of just "zero trades."
+- **Toggles** to disable the location and volume rules independently (`useLocationFilter`,
+  `requireVolume`), so their actual effect on trade frequency can be tested empirically.
+- A **bias MA type selector** (SMMA vs. SMA) instead of asserting one is correct.
+
 ## What's still open
 
 - [x] MRC exact formula — resolved, see above.

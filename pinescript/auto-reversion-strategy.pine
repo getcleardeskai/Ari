@@ -38,6 +38,18 @@
 // outer=2nd), the volume confirmation window length, fixed vs. swing-based
 // stop — all exposed as inputs.
 //
+// UPDATE 2026-08-19 (again): added a diagnostic funnel table (bottom-left)
+// counting how many confirmed bars satisfy each rule stage — bias, +location,
+// +QQE signal, +volume->entered — so "why aren't there trades" has an actual
+// answer instead of silence. Also added toggles to disable the location and
+// volume rules individually (useLocationFilter, requireVolume) and a MA-type
+// selector (SMMA vs SMA) — all for isolating which specific rule is the
+// bottleneck rather than guessing. outerMult stays at the real source's
+// default (2.415); a materially smaller value (e.g. 1.5) makes the band
+// narrower and the bias condition easier to satisfy, at the cost of matching
+// the real MRC indicator less closely — worth testing directly via the input
+// rather than assuming either number is "right."
+//
 // No painting (barstate.isconfirmed gating) and no re-entries (pyramiding=0
 // + position-size checks) follow the same pattern as trend-bias-qqe-strategy.pine.
 //
@@ -63,11 +75,15 @@ tpBandLevel    = input.int(2, "Take-profit band level (1=inner, 2=outer)", minva
 showZone   = input.bool(true, "Draw gradient zone (visual only)", group = grpMRC)
 zoneTransp = input.int(60, "Zone transparency", minval = 0, maxval = 100, group = grpMRC)
 
-grpBias = "Bias (200 SMMA)"
-maLen = input.int(200, "Bias MA length", minval = 1, group = grpBias)
+grpBias = "Bias (200 MA)"
+maLen  = input.int(200, "Bias MA length", minval = 1, group = grpBias)
+maType = input.string("SMMA", "Bias MA type", options = ["SMMA", "SMA"], group = grpBias)
+
+grpFilters = "Rule Toggles (for diagnosing why trades are/aren't firing)"
+useLocationFilter = input.bool(true, "Require location filter (candle tags outer band)", group = grpFilters)
+requireVolume     = input.bool(true, "Require volume confirmation", group = grpFilters)
 
 grpVol = "Volume Confirmation"
-requireVolume  = input.bool(true, "Require volume confirmation (turn OFF if your chart/symbol has no volume data)", group = grpVol)
 volAvgLen      = input.int(20, "Volume average length", minval = 1, group = grpVol)
 volConfirmBars = input.int(3, "Confirmation window (bars after signal)", minval = 0, group = grpVol)
 
@@ -200,13 +216,13 @@ tpUpperBand    = f_bandAt(tpBandLevel, true)
 tpLowerBand    = f_bandAt(tpBandLevel, false)
 
 // ---------------------------------------------------------------------------
-// Bias — 200 MA fully below/above the entire (outer) MRC band. Trader's
-// chart uses SMMA (Smoothed MA) specifically, not a plain SMA — SMMA is the
-// same thing Pine calls RMA (Wilder's smoothing), so ta.rma() here, not
-// ta.sma(). This was wrong in the earlier version.
+// Bias — 200 MA fully below/above the entire (outer) MRC band. SMMA
+// (Smoothed MA) is what Pine calls RMA (Wilder's smoothing) — exposed as a
+// toggle now instead of asserted, since it's worth testing both against
+// what you actually see on your real chart.
 // ---------------------------------------------------------------------------
-maVal = ta.rma(close, maLen)
-plot(maVal, "Bias MA (SMMA)", color = color.new(color.white, 0), linewidth = 2)
+maVal = maType == "SMMA" ? ta.rma(close, maLen) : ta.sma(close, maLen)
+plot(maVal, "Bias MA", color = color.new(color.white, 0), linewidth = 2)
 
 biasLongOk  = maVal < lower2
 biasShortOk = maVal > upper2
@@ -271,10 +287,10 @@ var int pendingBarsLeft = 0
 doLongEntry  = false
 doShortEntry = false
 
-if barstate.isconfirmed
-    newLongSetup  = qqeLongSignal  and biasLongOk  and locationLongOk
-    newShortSetup = qqeShortSignal and biasShortOk and locationShortOk
+newLongSetup  = qqeLongSignal  and biasLongOk  and (not useLocationFilter or locationLongOk)
+newShortSetup = qqeShortSignal and biasShortOk and (not useLocationFilter or locationShortOk)
 
+if barstate.isconfirmed
     if newLongSetup
         if volOk
             doLongEntry := true
@@ -336,6 +352,40 @@ if strategy.position_size < 0
 
 plotshape(longCondition, style = shape.triangleup, location = location.belowbar, color = colBull, size = size.small, title = "Long Entry")
 plotshape(shortCondition, style = shape.triangledown, location = location.abovebar, color = colBear, size = size.small, title = "Short Entry")
+
+// ---------------------------------------------------------------------------
+// Diagnostic funnel — counts how many CONFIRMED bars satisfy each stage of
+// the rule chain, so you can see exactly where entries are getting choked
+// off instead of just seeing "zero trades" with no explanation. Table in
+// the bottom-left.
+// ---------------------------------------------------------------------------
+var int cBias    = 0   // bias alone (long+short combined)
+var int cLoc     = 0   // bias AND (location, if enabled)
+var int cSetup   = 0   // bias AND location AND QQE signal (newLongSetup/newShortSetup)
+var int cEntered = 0   // actually entered (passed volume gate too)
+
+if barstate.isconfirmed
+    if biasLongOk or biasShortOk
+        cBias += 1
+    if (biasLongOk and (not useLocationFilter or locationLongOk)) or (biasShortOk and (not useLocationFilter or locationShortOk))
+        cLoc += 1
+    if newLongSetup or newShortSetup
+        cSetup += 1
+if longCondition or shortCondition
+    cEntered += 1
+
+var table diag = table.new(position.bottom_left, 2, 5, border_width = 1, border_color = color.new(color.gray, 50))
+if barstate.islast
+    table.cell(diag, 0, 0, "Funnel stage", bgcolor = color.new(color.gray, 70), text_color = color.white, text_size = size.small)
+    table.cell(diag, 1, 0, "Bars", bgcolor = color.new(color.gray, 70), text_color = color.white, text_size = size.small)
+    table.cell(diag, 0, 1, "Bias only", bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(diag, 1, 1, str.tostring(cBias), bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(diag, 0, 2, "+ Location" + (useLocationFilter ? "" : " (off)"), bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(diag, 1, 2, str.tostring(cLoc), bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(diag, 0, 3, "+ QQE signal", bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(diag, 1, 3, str.tostring(cSetup), bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(diag, 0, 4, "+ Volume -> Entered" + (requireVolume ? "" : " (vol off)"), bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(diag, 1, 4, str.tostring(cEntered), bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
 
 alertcondition(longCondition, "Auto Reversion Long", "{{ticker}} Auto Reversion long entry @ {{close}}")
 alertcondition(shortCondition, "Auto Reversion Short", "{{ticker}} Auto Reversion short entry @ {{close}}")
