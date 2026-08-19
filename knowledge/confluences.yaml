@@ -40,6 +40,10 @@ confluences:
          ladder (1, 0, -1, -2, -2.5, -3.25, -3.5, -4, -4.5, -5), reversed, no log scale, no
          extend. See midnight-deviation-method.md for the full breakdown and remaining open
          items (anchor mapping, upward projection) before this gets coded into Pine Script."
+      - "2026-08-19: math fully resolved — anchor mapping (0=near wick, 1=far wick), single fib
+         tool (not two), and the level meaning: 1 to -2.5 = pullback/S-R zone, -3.25 to -5 =
+         reversion/big-move zone. Only remaining blockers are the 00:00 timezone/session
+         definition and the trend-day variant. Once those close, this is ready for Pine Script."
 
   - id: market_structure
     name: Market Structure (Bias / BOS / CHoCH)

@@ -52,27 +52,31 @@ This confirms/refines the method above:
 - The trigger candle is explicitly labeled on-chart as the **"Deciding 12:00AM candle"** — i.e.
   the 5m candle beginning at 00:00 is literally called "the deciding candle." This is the anchor
   candle referenced in the base case and the extended (multi-candle-run) case above.
-- Chart annotation: **"Candles connected based on close."** This means when a run of same-
-  direction candles precedes the reversal (the extended case), the candles are treated as
-  connected/joined at their **close** prices, not by simple high/low wick extremes across the
-  whole run. This refines step "Extended case" above — **needs one more confirmation pass**:
-  whether the fib anchor points end up being close-to-close of the run's boundary candles, or
-  close is just how the run is visually chained together while the actual anchor points are still
-  the first candle's high and the last candle's low. Treat as open until the trader confirms
-  which.
+- **"Candles connected based on close" — resolved.** This is a visual/conceptual chaining
+  convention, not an alternate price source. Starting from the 00:00 anchor candle (say it's
+  red), you keep chaining every consecutive same-color candle to it — "like a string" — until you
+  hit an opposite-color candle, which breaks the chain ("a rotting part"). That determines how
+  long the run is (and therefore its size). **The actual anchor prices are unchanged from the
+  Extended Case above: first candle's wick high + last candle's (in the chain) wick low** — close
+  price is not itself used as an anchor point, it's just how the run of candles is identified.
 
-### Fib Retracement tool — exact settings
+### Fib Retracement tool — exact settings & anchor mapping (resolved)
 
-TradingView's built-in **Fib Retracement** drawing tool, anchored on the deciding candle's two
-extremes (candle top = anchor "1", candle bottom = anchor "0", per the tool's default two-point
-anchoring — confirm which physical price, high or low, maps to "1" vs "0" once a numeric example
-is given).
+TradingView's built-in **Fib Retracement** drawing tool, drawn **once** — a single two-point tool
+anchored on the deciding candle's wick high and wick low (not open/close). Trader confirmed this
+is deliberately one tool doing both directions (not two separate fibs drawn up and down) — that
+was a UX pain point in how they currently do it manually, which is exactly why this should be
+automated in Pine Script instead of using the interactive tool at all.
 
+- **Anchor "0"** = the point the deviation "sits" at — i.e. the near/reference wick, the level
+  price is currently closest to.
+- **Anchor "1"** = the far wick — the very **first level of support/resistance** price can
+  rebound off.
+- Both anchors are **wicks** (high/low), confirmed — not open/close.
 - **Extend:** Don't extend
 - **Reverse:** ON
 - **Fib levels based on log scale:** OFF
-- **Use one color:** ON (single bicolor swatch — red/teal, i.e. bearish/bullish coloring rather
-  than per-level custom colors)
+- **Use one color:** ON (single bicolor swatch — red/teal, bearish/bullish)
 - **Levels (Style tab), enabled/checked only** — all other stock levels (0.5, 0.618, 0.75, 1.272,
   1.618, 2.272, 3.618, etc.) are left **unchecked/disabled**:
 
@@ -89,18 +93,24 @@ is given).
   | -4.5  | ✅ |
   | -5    | ✅ |
 
-  So the tool is used purely as a way to **project a ladder of negative extension levels below
-  the 0–1 anchor range** (1, 0, then -1 through -5 in irregular steps) — not as a classic
-  0.5/0.618 retracement. This is consistent with "mark it up and then down" — the 0/1 anchor is
-  the deciding candle itself, and the negative levels are what get projected out as the actual
-  points of interest (the "midnight deviation" levels).
+  So the tool projects a ladder of negative extension levels below/beyond the 0–1 anchor range —
+  not a classic 0.5/0.618 retracement.
 - Labels: Left-aligned, Values shown, font size 12.
 
-**Still open:** exact price↔ratio mapping (which of candle-high/candle-low is ratio "0" vs "1"),
-and whether "up and down" means this same tool is also drawn a second time projecting *upward*
-(positive levels beyond 1) as a mirror, or whether "up and down" was already fully described by
-this single negative-extension ladder. Needs one worked numeric example (actual prices + which
-resulting level was traded from) to fully close out.
+### What each level means (trader's read, 2026-08-19)
+
+- **Levels 1 through ~2.5** ("1" through "-2.5"): **pullback zone** — areas where price can pull
+  back / minor support-resistance reactions, not necessarily the big move.
+- **Levels -3.25, -3.5, -4, -4.5, -5**: **reversion zone** — where the trader is looking for the
+  actual big reversion move.
+- Reactions are typically visible at **each** individual level, whether or not it lines up with
+  another confluence — i.e. these levels have some standalone predictive value, and stacking
+  other confluence on top of one just increases confidence/precision, per the original "alignment
+  = tight entry" framework in `model-overview.md`.
+- **Not yet quantified:** exact per-level weight. The pullback-vs-reversion split above gives a
+  first-pass grouping — reasonable starting point is weighting the -3.25 to -5 band higher for
+  the "big move" 1:6–1:10 setups this model is built around, and the 1–2.5 band lower/as a
+  secondary pullback signal. To be tuned via backtesting.
 
 ## Open questions (do not build/automate around these until confirmed)
 
@@ -108,27 +118,38 @@ resulting level was traded from) to fully close out.
       reference UTC; also unsure if this lines up with the Asia session open — needs to be
       pinned down precisely, since a Pine Script implementation needs an exact `timestamp()`/
       session string).
-- [ ] Confirm mirrored bullish-candle-first case works identically.
+- [ ] Confirm mirrored bullish-candle-first case works identically (i.e. same rules, colors
+      flipped — not yet explicitly walked through with an example).
 - [ ] Trend-day variant of the marking method.
-- [ ] Which candle extreme (high or low) maps to fib ratio "1" vs "0".
-- [ ] Whether "connected based on close" changes the actual anchor points for multi-candle runs,
-      or is just a visual chaining convention.
-- [ ] Whether the upward projection is a second/mirrored fib draw, or already covered.
-- [ ] Which of the enabled levels (1, 0, -1, -2, -2.5, -3.25, -3.5, -4, -4.5, -5) are actually
-      treated as "the" points of interest vs. just visual reference — likely all of them feed the
-      confluence stack with -2/-2.5 or similar being more heavily weighted, but this needs a
-      worked trade example to confirm.
+- [ ] Per-level weighting within `midnight_deviation` (pullback band vs. reversion band) —
+      pending backtest data.
+
+## Resolved (previously open, now confirmed 2026-08-19)
+
+- ~~Which candle extreme maps to fib ratio "1" vs "0"~~ — both are wicks; "0" = near/reference
+  wick, "1" = far wick / first support-resistance level.
+- ~~Whether "connected based on close" changes the anchor points~~ — no, it's just the chaining
+  convention for identifying the run; anchors are still first-candle-high / last-candle-low.
+- ~~Whether the upward projection is a second/mirrored fib draw~~ — no, it's one single fib tool;
+  the ladder above (1, 0, -1 ... -5) already covers it.
 
 ## Automation note
 
 This is designed to be **fully automatable** (per trader's stated goal — no manual chart
-marking, all confluences including this one auto-plotted). Once the open questions above are
-closed out, the Pine Script implementation is straightforward: detect the 00:00 candle(s) per the
-base/extended-case logic, take the two anchor prices, and replicate the same fixed ratio ladder
-(1, 0, -1, -2, -2.5, -3.25, -3.5, -4, -4.5, -5) as horizontal levels/lines rather than using
-TradingView's interactive Fib Retracement tool.
+marking, all confluences including this one auto-plotted, and specifically to stop having to
+place the fib tool by hand every session). The math is now fully specified:
+
+1. Detect the 00:00 candle and, if needed, chain consecutive same-color candles to it until an
+   opposite-color candle breaks the chain (per the resolved logic above).
+2. Anchor 0 = near wick, anchor 1 = far wick, using the run's boundary candles.
+3. Compute `level_price = anchor0 + (anchor1 - anchor0) * ratio` for each ratio in
+   `[1, 0, -1, -2, -2.5, -3.25, -3.5, -4, -4.5, -5]` and plot as horizontal lines — no need to use
+   TradingView's interactive Fib Retracement tool at all once this is in Pine Script.
+
+Remaining blockers before coding this are just the timezone/session definition and the trend-day
+variant, both still open above.
 
 ## Next step
 
-One worked numeric example (actual candle prices + which level price was the actual entry) closes
-out the remaining open questions above.
+Nail down the 00:00 session/timezone definition and the trend-day variant, then this confluence
+is ready to move into `pinescript/`.
