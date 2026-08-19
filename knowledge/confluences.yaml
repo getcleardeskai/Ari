@@ -281,6 +281,9 @@ confluences:
          MSS/COS (reversal) are triggered by different conditions (swing high/low vs. Protected
          High/Low). Consider whether market_structure should be renamed to just cover BOS once
          both are actually coded."
+      - "2026-08-19: confirmed via reference diagram that ChoCH (Change of Character) is the same
+         signal as MSS/COS, just alternate naming — not a separate confluence. This id covers all
+         three names."
 
   - id: range_settlement
     name: Range Settlement (RS)
@@ -317,7 +320,11 @@ confluences:
       See ict-glossary.md.
     weight: 50
     status: testing
-    notes: []
+    notes:
+      - "2026-08-19: reference diagram shows a further tier above this — Long-Term High/Low
+         (LTH/LTL), built from multiple ITH/ITL the same way ITH/ITL is built from STH/STL. Not
+         yet added as its own confluence entry — see 'Long-Term High / Low' in ict-glossary.md;
+         may end up as a parameterization of this same detection logic rather than a separate id."
 
   - id: external_range_liquidity
     name: External Range Liquidity (ERL)

@@ -84,17 +84,24 @@ trend) — **confirms the existing trend is continuing**. Distinct from MSS/COS 
 signals reversal. After a BOS, traders typically wait for a retrace into a PDA before looking for
 continuation entries.
 
-## Change of Structure (COS) / Market Structure Shift (MSS)
+## Change of Structure (COS) / Market Structure Shift (MSS) / Change of Character (ChoCH)
 
 Occurs when price breaks the **most recent Protected Low** in a bullish trend (or **most recent
 Protected High** in a bearish trend) — signals the current trend **may be ending**, control has
 shifted, reversal or deeper retrace becoming more likely. After an MSS, traders wait for a retrace
 into a PDA before entering in the new direction.
 
-**Important distinction this clarifies vs. earlier notes:** BOS ≠ CHoCH/MSS in trigger — BOS
-breaks a swing high/low (continuation), MSS/COS breaks a *Protected* High/Low specifically
-(reversal). The original `market_structure` confluence entry in `confluences.yaml` should be read
-with this more precise distinction going forward.
+**Important distinction this clarifies vs. earlier notes:** BOS ≠ CHoCH/MSS/COS in trigger — BOS
+breaks a swing high/low (continuation), MSS/COS/ChoCH breaks a *Protected*/prior swing High or Low
+specifically (reversal). The original `market_structure` confluence entry in `confluences.yaml`
+should be read with this more precise distinction going forward.
+
+**Confirmed 2026-08-19 (reference diagram):** ChoCH and MSS/COS are **the same concept, just
+alternate naming** — a reference diagram shows two otherwise-identical structure sequences, one
+labeled "Break of Structure with Market Structure Shift" and the other "Break of Structure with
+Change of Character," both marking the shift at the same point (the break of the prior swing
+low/high that had been forming the trend). Treat ChoCH as a synonym for MSS/COS, not a separate
+confluence — `change_of_structure` in `confluences.yaml` covers all three names.
 
 ## Range Settlement (RS) — indicator
 
@@ -121,6 +128,20 @@ Larger/more significant structure built from multiple STHs/STLs.
 - **ITL:** a low with STLs on both sides of it — larger sell-side liquidity pool.
 - Used to understand larger market structure and where price may seek liquidity, paired with PDAs
   and MSS to determine targets/reversals/direction.
+
+## Long-Term High / Low (LTH / LTL)
+
+**Added 2026-08-19 from a reference structure diagram** — a third, larger tier above ITH/ITL,
+following the exact same nesting pattern:
+
+- **STH/STL** (smallest) → several of these flank a point → **ITH/ITL** → several of those flank
+  a point → **LTH/LTL** (largest, only LTH shown in the source diagram, LTL is the implied
+  bearish/low-side mirror).
+- Same interpretation as ITH/ITL, just one tier further out — the largest, most significant
+  liquidity pool / structural turning point in the hierarchy. Not yet in `confluences.yaml` as
+  its own entry — consider adding once we're ready to actually detect this tier distinctly from
+  ITH/ITL (may just be a matter of degree/parameterization rather than a separate detection
+  rule).
 
 ## External Range Liquidity (ERL)
 
