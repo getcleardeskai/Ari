@@ -10,16 +10,16 @@ multi-band channel (overextension) + QQE entry signal + a volume-vs-average conf
 (with a "pending" grace period if volume doesn't confirm on the signal bar itself). ATR/tick stop,
 band-level take-profit.
 
-**v1 locked in, 2026-08-19:** simple, long-only. MRC and QQE are exact ports of the trader's real
-source scripts (fareidzulkifli's Mean Reversion Channel, colinmck's QQE signals) with the outer
-multiplier corrected to 1.5 (the trader's actual setting, confirmed from their settings dialog —
-not the public script's own default of 2.415). Entry: bias (MA fully below the outer band) +
-price has touched the outer band at some point (persists across bars, doesn't need to coincide
-with the signal) + a QQE long signal, confirmed-close only. Exit: take profit at the live inner
-top band (R1), stop as a safety net. No shorts, no volume filter — deferred to a later version.
-See the file's own header comment and `../knowledge/strategies/mean-reversion.md` for the full
-history of what changed to get here (SMMA-vs-SMA bug, wrong outer multiplier, dropped rules in an
-earlier comparison attempt).
+**v1 locked in, 2026-08-19:** simple, long + short. MRC and QQE are exact ports of the trader's
+real source scripts (fareidzulkifli's Mean Reversion Channel, colinmck's QQE signals) with the
+outer multiplier corrected to 1.5 (the trader's actual setting, confirmed from their settings
+dialog — not the public script's own default of 2.415). Entry: bias (MA fully outside the outer
+band) + price has touched the outer band at some point (persists across bars, doesn't need to
+coincide with the signal) + a QQE signal in the matching direction, confirmed-close only. Exit:
+take profit at the live inner band on the opposite side, stop at the live outer band on the entry
+side. No volume filter — deferred to a later version. See the file's own header comment and
+`../knowledge/strategies/mean-reversion.md` for the full history of what changed to get here
+(SMMA-vs-SMA bug, wrong outer multiplier, dropped rules in an earlier comparison attempt).
 
 **How to use it:** TradingView → open an MNQ1! or NQ1! chart → Pine Editor → paste this file's
 contents → Add to Chart → Strategy Tester tab. Hand-written, not yet run through TradingView's

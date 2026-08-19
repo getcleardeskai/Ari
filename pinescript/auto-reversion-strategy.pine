@@ -1,27 +1,30 @@
 //@version=6
 // ============================================================================
-// Auto Reversion Strategy — v1 (simple, long-only)
+// Auto Reversion Strategy — v1 (simple, long + short)
 //
 // Mean-reversion half of the two-strategy plan (see
 // ../knowledge/automation-architecture.md and ../knowledge/strategies/mean-reversion.md).
 //
-// Rules, exactly as specified 2026-08-19:
+// Rules, exactly as specified 2026-08-19 (long case; short is the exact mirror):
 //   1. BIAS  : the entire MRC channel sits above the 200 MA (equivalently:
-//              the MA is fully below the outer band).
+//              the MA is fully below the outer band). Mirror: entire MRC
+//              below the MA, for shorts.
 //   2. TOUCH : price has touched the outer band at some point while that
 //              bias holds. Persistent, not same-bar — the touch and the
 //              signal do NOT need to happen on the same candle.
-//   3. SIGNAL: once touched, wait (however long it takes) for a QQE long
-//              signal. It does not need to print while price is still
-//              inside/touching the band — only that a touch happened at
-//              some point since bias last became true.
+//   3. SIGNAL: once touched, wait (however long it takes) for a QQE
+//              long/short signal. It does not need to print while price is
+//              still inside/touching the band — only that a touch happened
+//              at some point since bias last became true.
 //   4. TIMING: entries only fire on a CONFIRMED bar close.
-//   5. Long only for this version — no shorts, no volume filter. Both can
-//      be added back once this simple version is validated.
+//   5. No volume filter for this version — can be added back once this
+//      simple version is validated.
 //
-// Exit: take profit when price touches the INNER top band (R1) — a
-// continuously-updated limit order at the live R1 level, not frozen at
-// entry. Stop loss stays as a safety net (fixed ticks by default).
+// Exit: take profit when price touches the INNER band on the opposite side
+// (R1 for longs, S1 for shorts) — a continuously-updated limit order at the
+// live level, not frozen at entry. Stop loss is at the OUTER band on the
+// entry side — the bottom of the lower (S2) band for longs, the top of the
+// upper (R2) band for shorts — also live-updated each bar.
 //
 // MRC is an exact port of fareidzulkifli's "Mean Reversion Channel"
 // (SuperSmoother variant): mean line = SuperSmoother(hlc3, 200); band width
@@ -62,15 +65,9 @@ rsiLen    = input.int(14, "RSI length", minval = 2, group = grpQQE)
 rsiSmooth = input.int(5, "RSI smoothing (EMA)", minval = 1, group = grpQQE)
 qqeFactor = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group = grpQQE)
 
-grpRisk = "Risk / Exit"
-useFixedStop = input.bool(true, "Use fixed-tick stop (off = last swing low)", group = grpRisk)
-stopTicks    = input.float(25, "Fixed stop (ticks)", minval = 1, group = grpRisk)
-swingLen     = input.int(5, "Swing lookback for swing-based stop", minval = 1, group = grpRisk)
-
 grpColor = "Colors"
 colBull = input.color(#089981, "Bullish color", group = grpColor)
-
-tick = syminfo.mintick
+colBear = input.color(#f23645, "Bearish color", group = grpColor)
 
 // ---------------------------------------------------------------------------
 // MRC
@@ -173,12 +170,14 @@ fill(pl7, pl8, color = showZone ? zColor7 : na)
 fill(pl8, pl9, color = showZone ? zColor8 : na)
 
 // ---------------------------------------------------------------------------
-// Bias — entire MRC above the 200 MA, i.e. the MA sits fully below the outer band
+// Bias — entire MRC above/below the 200 MA, i.e. the MA sits fully below the
+// outer band (longs) or fully above it (shorts)
 // ---------------------------------------------------------------------------
 maVal = maType == "SMMA" ? ta.rma(close, maLen) : ta.sma(close, maLen)
 plot(maVal, "Bias MA", color = color.new(color.white, 0), linewidth = 2)
 
-biasLongOk = maVal < lower2
+biasLongOk  = maVal < lower2
+biasShortOk = maVal > upper2
 
 // ---------------------------------------------------------------------------
 // QQE signal — exact port of colinmck's "QQE signals" (counter-based, not
@@ -204,52 +203,70 @@ shortBand := (rsiMa[1] < shortBand[1] and rsiMa < shortBand[1]) ? math.min(short
 qqeTrend := ta.cross(rsiMa, shortBand[1]) ? 1 : ta.cross(longBand[1], rsiMa) ? -1 : nz(qqeTrend[1], 1)
 fastAtrRsiTL = qqeTrend == 1 ? longBand : shortBand
 
-var int qqeXLongCount = 0
-qqeXLongCount := fastAtrRsiTL < rsiMa ? qqeXLongCount + 1 : 0
-qqeCrossUp = qqeXLongCount == 1
+var int qqeXLongCount  = 0
+var int qqeXShortCount = 0
+qqeXLongCount  := fastAtrRsiTL < rsiMa ? qqeXLongCount + 1 : 0
+qqeXShortCount := fastAtrRsiTL > rsiMa ? qqeXShortCount + 1 : 0
+qqeCrossUp   = qqeXLongCount == 1
+qqeCrossDown = qqeXShortCount == 1
 
-qqeLongSignal = qqeCrossUp and barstate.isconfirmed
+qqeLongSignal  = qqeCrossUp   and barstate.isconfirmed
+qqeShortSignal = qqeCrossDown and barstate.isconfirmed
 
 // ---------------------------------------------------------------------------
 // Setup — persistent touch, not same-bar. While bias holds, remember that
-// price has touched the outer band; once touched, take the next QQE long
-// signal whenever it comes (same bar or many bars later). Reset if bias
-// breaks before a signal arrives.
+// price has touched the outer band; once touched, take the next QQE
+// long/short signal whenever it comes (same bar or many bars later). Reset
+// if bias breaks before a signal arrives.
 // ---------------------------------------------------------------------------
-var bool touchedOuter = false
+var bool touchedLower = false
+var bool touchedUpper = false
 
 if barstate.isconfirmed
     if not biasLongOk
-        touchedOuter := false
+        touchedLower := false
     else if low <= lower2
-        touchedOuter := true
+        touchedLower := true
 
-doLongEntry = false
-if barstate.isconfirmed and biasLongOk and touchedOuter and qqeLongSignal
+    if not biasShortOk
+        touchedUpper := false
+    else if high >= upper2
+        touchedUpper := true
+
+doLongEntry  = false
+doShortEntry = false
+if barstate.isconfirmed and biasLongOk and touchedLower and qqeLongSignal
     doLongEntry := true
-    touchedOuter := false   // consumed
+    touchedLower := false   // consumed
+if barstate.isconfirmed and biasShortOk and touchedUpper and qqeShortSignal
+    doShortEntry := true
+    touchedUpper := false   // consumed
 
 // ---------------------------------------------------------------------------
-// Entry (no re-entry: pyramiding=0 + explicit position check)
+// Entries (no re-entry: pyramiding=0 + explicit position check)
 // ---------------------------------------------------------------------------
-longCondition = doLongEntry and strategy.position_size <= 0
-
-var float entryStop = na
-swingLow = ta.lowest(low, swingLen)
+longCondition  = doLongEntry  and strategy.position_size <= 0
+shortCondition = doShortEntry and strategy.position_size >= 0
 
 if longCondition
     strategy.entry("Long", strategy.long)
-    entryStop := useFixedStop ? close - stopTicks * tick : swingLow[1]
+if shortCondition
+    strategy.entry("Short", strategy.short)
 
-// Exit target is the LIVE inner top band (R1) — continuously updated each
-// bar, not frozen at entry, so it tracks "touching the inner part of the
-// top band" literally.
+// Stop and target are both LIVE — continuously updated each bar, not frozen
+// at entry. Stop = outer band on the entry side (bottom of S2 for longs,
+// top of R2 for shorts). Target = inner band on the opposite side (R1 for
+// longs, S1 for shorts).
 if strategy.position_size > 0
-    strategy.exit("Long Exit", "Long", stop = entryStop, limit = upper1)
+    strategy.exit("Long Exit", "Long", stop = lower2, limit = upper1)
+if strategy.position_size < 0
+    strategy.exit("Short Exit", "Short", stop = upper2, limit = lower1)
 
 plotshape(longCondition, style = shape.triangleup, location = location.belowbar, color = colBull, size = size.small, title = "Long Entry")
+plotshape(shortCondition, style = shape.triangledown, location = location.abovebar, color = colBear, size = size.small, title = "Short Entry")
 
 alertcondition(longCondition, "Auto Reversion Long", "{{ticker}} Auto Reversion long entry @ {{close}}")
+alertcondition(shortCondition, "Auto Reversion Short", "{{ticker}} Auto Reversion short entry @ {{close}}")
 
 // ---------------------------------------------------------------------------
 // Bot webhook alerts — fires a JSON payload the bot (see ../bot/) can parse
@@ -265,9 +282,14 @@ f_alertJson(action) =>
 
 if longCondition
     alert(f_alertJson("long"), alert.freq_once_per_bar)
+if shortCondition
+    alert(f_alertJson("short"), alert.freq_once_per_bar)
 
 var float prevPositionSize = 0.0
-positionJustClosedLong = prevPositionSize > 0 and strategy.position_size <= 0
+positionJustClosedLong  = prevPositionSize > 0 and strategy.position_size <= 0
+positionJustClosedShort = prevPositionSize < 0 and strategy.position_size >= 0
 if positionJustClosedLong
     alert(f_alertJson("close_long"), alert.freq_once_per_bar)
+if positionJustClosedShort
+    alert(f_alertJson("close_short"), alert.freq_once_per_bar)
 prevPositionSize := strategy.position_size

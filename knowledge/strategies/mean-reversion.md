@@ -95,12 +95,16 @@ Trader confirmed the diagnostic approach found real bugs (SMMA vs SMA, outer mul
    candle — once touched, the setup stays "armed" until a signal arrives or bias breaks.
 3. **Signal:** the next QQE long signal after a touch, however long that takes.
 4. **Timing:** confirmed bar close only.
-5. **Long only** for v1 — no shorts, no volume filter. Both explicitly deferred to a later
-   version once this one is validated.
+5. No volume filter for v1 — deferred to a later version once this one is validated.
 
-**Exit:** take profit at the **inner** top band (R1), continuously updated to the live level each
-bar (not frozen at entry) — matches "exit at candle touching inner part of top MRC band"
-literally. Stop loss stays as a safety net (fixed ticks by default).
+**Exit:** take profit at the **inner** band on the opposite side (R1 for longs, S1 for shorts),
+continuously updated to the live level each bar (not frozen at entry) — matches "exit at candle
+touching inner part of top MRC band" literally. **Stop loss (2026-08-19, updated):** the **outer**
+band on the entry side — bottom of the lower (S2) band for longs, top of the upper (R2) band for
+shorts — also live-updated, replacing the earlier fixed-tick/swing-low stop entirely.
+
+**2026-08-19, later:** added the short side as the exact mirror of long — same bias/touch/signal
+logic, opposite direction.
 
 The diagnostic funnel table and rule toggles from the debugging phase were removed from the
 script now that the ruleset is settled — they did their job (found the real bugs) and would just
