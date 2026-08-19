@@ -28,6 +28,8 @@ needs to be re-explained between sessions, and no manual GitHub work is required
 - `knowledge/trade-strength-framework.md` — the general checklist of what stacks confluence into a
   stronger setup (HTF bias, liquidity target, location, PDA, sweep, confirmation, displacement,
   timing, LTF entry).
+- `knowledge/open-questions.md` — master checklist of everything still unresolved across all the
+  docs above, consolidated in one place.
 - `knowledge/confluences.yaml` — the living, weighted list of individual confluences (what they
   are, what timeframe they're drawn from, current weight/importance, status). This is the file
   that changes most often as we test and re-rank confluences.
