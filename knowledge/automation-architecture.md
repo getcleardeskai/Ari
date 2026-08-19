@@ -76,11 +76,38 @@ live should be reproducible from the same rules in a backtest.
 
 ## Status
 
-- **Auto Reversion** (mean reversion): rules captured, v1 built —
-  `pinescript/auto-reversion-strategy.pine`. See `strategies/mean-reversion.md`. Biggest open
-  item: the MRC band is approximated (exact formula unknown), needs visual verification against
-  the trader's real MRC indicator.
+- **Auto Reversion** (mean reversion): v1 built, MRC/QQE math now ported exactly from the
+  trader's real source scripts — `pinescript/auto-reversion-strategy.pine`. See
+  `strategies/mean-reversion.md`.
 - **Trend Following**: v1 built — `pinescript/trend-bias-qqe-strategy.pine` (structure-based bias
   + QQE entries). See `strategies/trend-following.md`.
 - Combination layer: not started, intentionally deferred.
-- Live execution bot: not started, intentionally deferred until strategies are validated.
+- **Live execution bot: v1 built** (2026-08-19) — `bot/`. Architecture below is now concrete, not
+  hypothetical.
+
+## Execution bot — concrete architecture (2026-08-19)
+
+Decided: bot runs on the trader's own always-on PC, exposed to TradingView's webhook servers via
+a **Cloudflare Tunnel** (no port-forwarding/router changes needed). Execution broker is
+**Tradovate**, via its REST API.
+
+```
+Pine strategy (bias/signal already validated) --alert()--> TradingView Alert (webhook)
+    --POST--> Cloudflare Tunnel --> webhook_server.py (FastAPI, local PC)
+    --if secret valid & not a duplicate & DRY_RUN=false--> tradovate_client.py
+    --> Tradovate REST API --> real order
+```
+
+- Both `pinescript/trend-bias-qqe-strategy.pine` and `pinescript/auto-reversion-strategy.pine`
+  now fire `alert()` calls (not just `alertcondition()`) with a JSON payload
+  (`secret`/`strategy`/`symbol`/`action`/`price`) on every entry AND on every exit (exit detection
+  is generic — any transition from a non-flat position to flat — so it covers stop-outs,
+  take-profits, and rule-based closes uniformly without the bot needing to know which one fired).
+- `bot/webhook_server.py` validates the shared secret, de-dupes redelivered alerts, and — only if
+  `DRY_RUN=false` — calls into `bot/tradovate_client.py` to place the order.
+- Safety defaults: `DRY_RUN=true` and `TRADOVATE_ENV=demo` out of the box. Both need to be
+  deliberately changed, not just left on by accident. See `bot/README.md` for the staged
+  go-live process.
+- Not yet built (see `bot/README.md` "What's NOT built yet"): position-size verification against
+  Tradovate before ordering, contract symbol/rollover handling, daily loss limits/kill switch, and
+  the actual cross-strategy combination logic (both strategies currently fire independently).

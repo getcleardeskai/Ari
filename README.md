@@ -26,11 +26,11 @@ each other:**
    `pinescript/trend-bias-qqe-strategy.pine`, described in
    `knowledge/strategies/trend-following.md`.
 
-The end goal is a live execution bot that trusts pre-validated signals from these strategies and
-just acts on candle close — no live discretion. Full architecture:
-`knowledge/automation-architecture.md`. Full pivot history (this trend approach is the third tried
-in one day; midnight-deviation/OTE and ICT confluence-clustering are archived, not deleted):
-`knowledge/model-overview.md`.
+**The live execution bot is now built** (`bot/`) — TradingView alert → webhook → Tradovate order,
+running on a Cloudflare Tunnel from your own PC, defaulting to dry-run/demo mode. See
+`bot/README.md` for setup. Full architecture: `knowledge/automation-architecture.md`. Full pivot
+history (this trend approach is the third tried in one day; midnight-deviation/OTE and ICT
+confluence-clustering are archived, not deleted): `knowledge/model-overview.md`.
 
 ## Structure
 
@@ -42,6 +42,8 @@ in one day; midnight-deviation/OTE and ICT confluence-clustering are archived, n
 - `knowledge/model-overview.md` — full pivot history for how we got to the current approach.
 - `pinescript/trend-bias-qqe-strategy.pine` — the trend strategy's current implementation. See
   `pinescript/README.md` for all scripts and how to use them.
+- `bot/` — the live execution bot (webhook receiver + Tradovate order execution). See
+  `bot/README.md` for setup, `knowledge/automation-architecture.md` for the design.
 - `knowledge/confluences.yaml`, `knowledge/ict-glossary.md`, `knowledge/trade-strength-framework.md`
   — reference material from the archived ICT-confluence phase; `market_structure` and
   `change_of_structure` in `confluences.yaml` remain active since they're the basis for the trend

@@ -1,0 +1,13 @@
+# Secrets — never commit
+bot/.env
+*.env
+!.env.example
+
+# Python
+bot/venv/
+bot/__pycache__/
+**/__pycache__/
+*.pyc
+
+# OS
+.DS_Store

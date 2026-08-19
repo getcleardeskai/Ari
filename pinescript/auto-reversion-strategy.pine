@@ -339,3 +339,30 @@ plotshape(shortCondition, style = shape.triangledown, location = location.aboveb
 
 alertcondition(longCondition, "Auto Reversion Long", "{{ticker}} Auto Reversion long entry @ {{close}}")
 alertcondition(shortCondition, "Auto Reversion Short", "{{ticker}} Auto Reversion short entry @ {{close}}")
+
+// ---------------------------------------------------------------------------
+// Bot webhook alerts — fires a JSON payload the bot (see ../bot/) can parse
+// directly, on both entries and exits. Exit detection is generic (any
+// transition from a non-flat position to flat), so it fires whether the
+// exit was the stop or the take-profit — the bot doesn't need to know which.
+// ---------------------------------------------------------------------------
+grpBot = "Bot Webhook"
+webhookSecret   = input.string("changeme", "Webhook secret (must match the bot's WEBHOOK_SECRET)", group = grpBot)
+botStrategyName = input.string("auto_reversion", "Strategy name sent to the bot", group = grpBot)
+
+f_alertJson(action) =>
+    '{"secret":"' + webhookSecret + '","strategy":"' + botStrategyName + '","symbol":"' + syminfo.ticker + '","action":"' + action + '","price":' + str.tostring(close) + '}'
+
+if longCondition
+    alert(f_alertJson("long"), alert.freq_once_per_bar)
+if shortCondition
+    alert(f_alertJson("short"), alert.freq_once_per_bar)
+
+var float prevPositionSize = 0.0
+positionJustClosedLong  = prevPositionSize > 0 and strategy.position_size <= 0
+positionJustClosedShort = prevPositionSize < 0 and strategy.position_size >= 0
+if positionJustClosedLong
+    alert(f_alertJson("close_long"), alert.freq_once_per_bar)
+if positionJustClosedShort
+    alert(f_alertJson("close_short"), alert.freq_once_per_bar)
+prevPositionSize := strategy.position_size

@@ -248,3 +248,31 @@ if exitOnBias and strategy.position_size < 0 and tradeBias == 1
 // Plot the trailing stop for visual reference
 // ---------------------------------------------------------------------------
 plot(strategy.position_size > 0 ? longStopLevel : strategy.position_size < 0 ? shortStopLevel : na, title = "Trailing Stop", color = color.new(color.yellow, 0), style = plot.style_circles)
+
+// ---------------------------------------------------------------------------
+// Bot webhook alerts — fires a JSON payload the bot (see ../bot/) can parse
+// directly, on both entries and exits. Exit detection is generic (any
+// transition from a non-flat position to flat), so it fires whether the
+// exit was the ATR stop, the QQE-flip, or the bias-flip close — the bot
+// doesn't need to know which.
+// ---------------------------------------------------------------------------
+grpBot = "Bot Webhook"
+webhookSecret   = input.string("changeme", "Webhook secret (must match the bot's WEBHOOK_SECRET)", group = grpBot)
+botStrategyName = input.string("trend_qqe", "Strategy name sent to the bot", group = grpBot)
+
+f_alertJson(action) =>
+    '{"secret":"' + webhookSecret + '","strategy":"' + botStrategyName + '","symbol":"' + syminfo.ticker + '","action":"' + action + '","price":' + str.tostring(close) + '}'
+
+if longCondition
+    alert(f_alertJson("long"), alert.freq_once_per_bar)
+if shortCondition
+    alert(f_alertJson("short"), alert.freq_once_per_bar)
+
+var float prevPositionSize = 0.0
+positionJustClosedLong  = prevPositionSize > 0 and strategy.position_size <= 0
+positionJustClosedShort = prevPositionSize < 0 and strategy.position_size >= 0
+if positionJustClosedLong
+    alert(f_alertJson("close_long"), alert.freq_once_per_bar)
+if positionJustClosedShort
+    alert(f_alertJson("close_short"), alert.freq_once_per_bar)
+prevPositionSize := strategy.position_size
