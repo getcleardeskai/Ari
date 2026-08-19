@@ -1,0 +1,248 @@
+//@version=5
+// ============================================================================
+// Confluence Cluster Marker
+//
+// Detects individual ICT-style PDAs (Fair Value Gaps, Order Blocks, Rejection
+// Blocks) on the current chart timeframe, tracks which ones are still active
+// (unmitigated), and whenever several of them sit within a configurable
+// price band (default 50 ticks) of each other, draws ONE box around the
+// combined area labeled with every confluence type found inside it.
+//
+// This replaces the midnight-deviation / OTE approach (dropped 2026-08-19 —
+// too discretionary to encode consistently). This script is single-timeframe
+// for now (whatever chart it's on) — see ../knowledge/model-overview.md and
+// pinescript/README.md for the multi-timeframe plan (running this same logic
+// per rung of the Daily->4H->1H->45m->30m->15m->5m ladder via
+// request.security and feeding all of it into one shared cluster pass).
+//
+// Zone types included in this version: FVG, Order Block, Rejection Block.
+// Not yet included (planned next): BPR, IFVG, Breaker Block, structure
+// highs/lows (STH/STL/ITH/ITL), previous session liquidity. A zone this
+// script doesn't yet know about just won't show up in a cluster label.
+// ============================================================================
+indicator("Confluence Cluster Marker", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+grpFVG = "Fair Value Gap"
+showFVG    = input.bool(true, "Detect FVGs", group = grpFVG)
+minGapTicks = input.float(2.0, "Ignore FVGs smaller than (ticks)", minval = 0, group = grpFVG)
+
+grpOB = "Order Block"
+showOB       = input.bool(true, "Detect Order Blocks", group = grpOB)
+atrLen       = input.int(14, "ATR length (for displacement)", minval = 1, group = grpOB)
+dispAtrMult  = input.float(1.5, "Displacement candle >= ATR x", minval = 0.1, step = 0.1, group = grpOB)
+
+grpRB = "Rejection Block"
+showRB          = input.bool(true, "Detect Rejection Blocks", group = grpRB)
+wickRatioMin    = input.float(0.6, "Min wick / total range ratio", minval = 0.1, maxval = 0.95, step = 0.05, group = grpRB)
+minRangeTicks   = input.float(4.0, "Ignore candles smaller than (ticks)", minval = 0, group = grpRB)
+
+grpCluster = "Clustering"
+clusterTolTicks  = input.float(50, "Cluster tolerance / max span (ticks)", minval = 1, group = grpCluster)
+minConfluence    = input.int(2, "Min zones to draw a cluster box", minval = 2, group = grpCluster)
+maxTrackedZones  = input.int(80, "Max active zones tracked (perf cap)", minval = 10, maxval = 300, group = grpCluster)
+
+tick = syminfo.mintick
+clusterTol = clusterTolTicks * tick
+
+// ---------------------------------------------------------------------------
+// Active-zone storage (persists across bars via `var`)
+// Parallel arrays: one entry per active, unmitigated zone.
+//   zTop / zBottom : price range of the zone
+//   zLabel         : "FVG" | "OB" | "RB"
+//   zBias          : +1 = bullish/support (mitigated on close below zBottom)
+//                    -1 = bearish/resistance (mitigated on close above zTop)
+//   zStartBar      : bar_index the zone was created on (for the drawn box's left edge)
+// ---------------------------------------------------------------------------
+var array<float>  zTop      = array.new<float>()
+var array<float>  zBottom   = array.new<float>()
+var array<string> zLabel    = array.new<string>()
+var array<int>    zBias     = array.new<int>()
+var array<int>    zStartBar = array.new<int>()
+
+f_addZone(top, bottom, lbl, bias) =>
+    array.push(zTop, top)
+    array.push(zBottom, bottom)
+    array.push(zLabel, lbl)
+    array.push(zBias, bias)
+    array.push(zStartBar, bar_index)
+    // enforce cap: drop the oldest tracked zone if over the limit
+    if array.size(zTop) > maxTrackedZones
+        array.shift(zTop)
+        array.shift(zBottom)
+        array.shift(zLabel)
+        array.shift(zBias)
+        array.shift(zStartBar)
+    true
+
+// ---------------------------------------------------------------------------
+// Detection — runs every bar
+// ---------------------------------------------------------------------------
+
+// FVG: gap between the candle 2 bars back and the current candle
+bullishFVG = low > high[2]
+bearishFVG = high < low[2]
+
+if showFVG and bullishFVG and (low - high[2]) >= minGapTicks * tick
+    f_addZone(low, high[2], "FVG", 1)
+
+if showFVG and bearishFVG and (low[2] - high) >= minGapTicks * tick
+    f_addZone(low[2], high, "FVG", -1)
+
+// Order Block: last opposite-color candle immediately before a displacement candle
+atrVal = ta.atr(atrLen)
+bullDisplacement = (close - open) >= dispAtrMult * atrVal
+bearDisplacement = (open - close) >= dispAtrMult * atrVal
+prevBearish = close[1] < open[1]
+prevBullish = close[1] > open[1]
+
+if showOB and bullDisplacement and prevBearish
+    f_addZone(high[1], low[1], "OB", 1)
+
+if showOB and bearDisplacement and prevBullish
+    f_addZone(high[1], low[1], "OB", -1)
+
+// Rejection Block: candle with a dominant wick relative to its total range
+candleRange = high - low
+upperWick   = high - math.max(open, close)
+lowerWick   = math.min(open, close) - low
+
+bearishRB = candleRange > 0 and (upperWick / candleRange) >= wickRatioMin and candleRange >= minRangeTicks * tick
+bullishRB = candleRange > 0 and (lowerWick / candleRange) >= wickRatioMin and candleRange >= minRangeTicks * tick
+
+if showRB and bullishRB
+    f_addZone(math.min(open, close), low, "RB", 1)
+
+if showRB and bearishRB
+    f_addZone(high, math.max(open, close), "RB", -1)
+
+// ---------------------------------------------------------------------------
+// Mitigation — drop zones price has fully closed through
+// ---------------------------------------------------------------------------
+i = array.size(zTop) - 1
+while i >= 0
+    bias_i = array.get(zBias, i)
+    mitigated = (bias_i == 1 and close < array.get(zBottom, i)) or (bias_i == -1 and close > array.get(zTop, i))
+    if mitigated
+        array.remove(zTop, i)
+        array.remove(zBottom, i)
+        array.remove(zLabel, i)
+        array.remove(zBias, i)
+        array.remove(zStartBar, i)
+    i -= 1
+
+// ---------------------------------------------------------------------------
+// Clustering + drawing — only on the last bar, for performance
+// ---------------------------------------------------------------------------
+var array<box>   drawnBoxes  = array.new<box>()
+var array<label> drawnLabels = array.new<label>()
+
+// simple insertion sort of the active zones by zBottom ascending, keeping
+// the parallel arrays in sync
+f_sortZonesByBottom() =>
+    n = array.size(zBottom)
+    ii = 1
+    while ii < n
+        keyBottom = array.get(zBottom, ii)
+        keyTop    = array.get(zTop, ii)
+        keyLabel  = array.get(zLabel, ii)
+        keyBias   = array.get(zBias, ii)
+        keyStart  = array.get(zStartBar, ii)
+        jj = ii - 1
+        while jj >= 0 and array.get(zBottom, jj) > keyBottom
+            array.set(zBottom, jj + 1, array.get(zBottom, jj))
+            array.set(zTop, jj + 1, array.get(zTop, jj))
+            array.set(zLabel, jj + 1, array.get(zLabel, jj))
+            array.set(zBias, jj + 1, array.get(zBias, jj))
+            array.set(zStartBar, jj + 1, array.get(zStartBar, jj))
+            jj -= 1
+        array.set(zBottom, jj + 1, keyBottom)
+        array.set(zTop, jj + 1, keyTop)
+        array.set(zLabel, jj + 1, keyLabel)
+        array.set(zBias, jj + 1, keyBias)
+        array.set(zStartBar, jj + 1, keyStart)
+        ii += 1
+    true
+
+// Draws one cluster box+label if it has enough zones. Declared at the top
+// level (Pine requires user-defined functions outside any if/for block) and
+// reads the global drawnBoxes/drawnLabels/tick/minConfluence.
+f_flushCluster(bottom, top, startBar, biasSum, count, types) =>
+    if count >= minConfluence
+        isBull = biasSum > 0
+        isBear = biasSum < 0
+        boxCol    = isBull ? color.new(color.green, 85) : isBear ? color.new(color.red, 85) : color.new(color.gray, 85)
+        borderCol = isBull ? color.new(color.green, 40) : isBear ? color.new(color.red, 40) : color.new(color.gray, 40)
+        newBox = box.new(left = startBar, top = top, bottom = bottom, right = bar_index, border_color = borderCol, bgcolor = boxCol, extend = extend.right)
+        array.push(drawnBoxes, newBox)
+
+        // build "Bull FVG, Bull OB, ..." label text, deduped, from the raw types collected
+        dirTxt = isBull ? "Bull " : isBear ? "Bear " : ""
+        labelText = ""
+        seen = array.new<string>()
+        for t in types
+            tag = dirTxt + t
+            if not array.includes(seen, tag)
+                array.push(seen, tag)
+                labelText := labelText == "" ? tag : labelText + ", " + tag
+        widthTicks = math.round((top - bottom) / tick)
+        labelText := labelText + "\n(" + str.tostring(count) + " confluences, " + str.tostring(widthTicks) + " ticks)"
+        newLabel = label.new(x = bar_index, y = top, text = labelText, style = label.style_label_down, color = color.new(color.black, 0), textcolor = color.white, size = size.small)
+        array.push(drawnLabels, newLabel)
+    true
+
+if barstate.islast
+    // clear previous drawings
+    for b in drawnBoxes
+        box.delete(b)
+    array.clear(drawnBoxes)
+    for l in drawnLabels
+        label.delete(l)
+    array.clear(drawnLabels)
+
+    f_sortZonesByBottom()
+
+    n = array.size(zBottom)
+    if n > 0
+        // walk zones ascending, greedily merging into clusters that stay
+        // within clusterTol of each other and within clusterTol total span
+        clusterBottom = array.get(zBottom, 0)
+        clusterTop    = array.get(zTop, 0)
+        clusterStart  = array.get(zStartBar, 0)
+        clusterBiasSum = array.get(zBias, 0)
+        clusterCount  = 1
+        clusterTypes  = array.new<string>()
+        array.push(clusterTypes, array.get(zLabel, 0))
+
+        idx = 1
+        while idx < n
+            zb = array.get(zBottom, idx)
+            zt = array.get(zTop, idx)
+            zs = array.get(zStartBar, idx)
+            zBiasVal = array.get(zBias, idx)
+            zLbl = array.get(zLabel, idx)
+
+            wouldSpan = math.max(clusterTop, zt) - math.min(clusterBottom, zb)
+            overlapsOrClose = zb <= clusterTop + clusterTol
+
+            if overlapsOrClose and wouldSpan <= clusterTol
+                clusterBottom := math.min(clusterBottom, zb)
+                clusterTop := math.max(clusterTop, zt)
+                clusterStart := math.min(clusterStart, zs)
+                clusterBiasSum += zBiasVal
+                clusterCount += 1
+                array.push(clusterTypes, zLbl)
+            else
+                f_flushCluster(clusterBottom, clusterTop, clusterStart, clusterBiasSum, clusterCount, clusterTypes)
+                clusterBottom := zb
+                clusterTop := zt
+                clusterStart := zs
+                clusterBiasSum := zBiasVal
+                clusterCount := 1
+                clusterTypes := array.new<string>()
+                array.push(clusterTypes, zLbl)
+            idx += 1
+
+        f_flushCluster(clusterBottom, clusterTop, clusterStart, clusterBiasSum, clusterCount, clusterTypes)

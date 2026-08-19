@@ -1,7 +1,8 @@
-# Ari — NQ/MNQ Confluence Model & Pine Script Bot
+# Ari — NQ/MNQ Trend & Confluence Model / Pine Script Bot
 
-Personal research project for building, testing, and refining a discretionary-turned-systematic
-trading model on NQ / MNQ futures, plus the Pine Script implementation of that model.
+Personal research project for building, testing, and refining a systematic trend-following
+trading model on NQ / MNQ futures, using ICT-style structural confluences, plus the Pine Script
+implementation of that model.
 
 **Note on execution context:** the strategy work in this repo is developed independently of any
 specific broker/prop-firm platform. Any live or simulated execution happens elsewhere; this repo
@@ -13,48 +14,29 @@ You (the trader) describe confluences, rules, and examples in conversation. Clau
 repo as the persistent record — writing, updating, and versioning everything below — so nothing
 needs to be re-explained between sessions, and no manual GitHub work is required.
 
+## Current direction (2026-08-19)
+
+Trend-following, built on ICT structural confluences (market structure/bias, FVG, iFVG, BPR,
+Order Block, Breaker Block, Rejection Block, Inverse Rejection Block, liquidity concepts). The
+original midnight-deviation + OTE approach was tried first, then dropped as too discretionary to
+encode reliably — see `knowledge/model-overview.md` "Current direction" for the full history.
+Those two method docs are kept archived, not deleted, in case anything from them is useful later.
+
 ## Structure
 
-- `knowledge/model-overview.md` — the core framework: how the midnight level/deviation and
-  multi-timeframe confluence scaling fit together.
-- `knowledge/midnight-deviation-method.md` — the exact mechanics for marking the midnight
-  deviation (5-minute candle + fib method, including variant cases).
-- `knowledge/ote-method.md` — the Optimal Trade Entry fib method used to refine entries further,
-  including its (highly discretionary) swing-point selection.
-- `knowledge/automation-requirements.md` — functional requirements for the eventual bot: alerting
-  behavior, confidence scoring, thresholds.
+- `knowledge/model-overview.md` — the core framework, current direction, and pivot history. Start
+  here.
+- `knowledge/confluences.yaml` — the living, weighted list of individual confluences (what they
+  are, what timeframe they're drawn from, current weight/importance, status — includes which ones
+  are deprecated).
 - `knowledge/ict-glossary.md` — reference definitions for every ICT concept in the model (FVG,
   IFVG, BPR, PLC/PL, RB/IRB, OB/BB, BOS/MSS, liquidity concepts, premium/discount, etc).
 - `knowledge/trade-strength-framework.md` — the general checklist of what stacks confluence into a
-  stronger setup (HTF bias, liquidity target, location, PDA, sweep, confirmation, displacement,
-  timing, LTF entry).
-- `knowledge/open-questions.md` — master checklist of everything still unresolved across all the
-  docs above, consolidated in one place.
-- `knowledge/confluences.yaml` — the living, weighted list of individual confluences (what they
-  are, what timeframe they're drawn from, current weight/importance, status). This is the file
-  that changes most often as we test and re-rank confluences.
-- `knowledge/examples.md` — real or annotated trade examples used as reference cases when
-  validating logic changes.
-- `pinescript/` — Pine Script indicators/strategies as we build and iterate on them.
+  stronger setup.
+- `knowledge/examples.md` — real or reference/illustrative trade examples.
+- `knowledge/open-questions.md` — master checklist of everything still unresolved.
+- `knowledge/midnight-deviation-method.md`, `knowledge/ote-method.md`,
+  `knowledge/automation-requirements.md` — archived/pre-pivot docs, kept for reference.
+- `pinescript/` — Pine Script indicators/strategies as we build and iterate on them. See
+  `pinescript/README.md` for what's there and how to use it.
 - `backtests/` — notes and results from testing specific rule/weight configurations.
-
-## Automation goal
-
-The end goal is **full automation** — every confluence (midnight deviation, structure, FVG/iFVG,
-BPR, rejection/order blocks, previous session liquidity) gets auto-plotted by Pine Script rather
-than marked by hand on the chart. Method docs in `knowledge/` are written with that in mind: once
-a method is fully confirmed (no open questions left), it should translate directly into
-deterministic Pine Script logic.
-
-## Core model, in short
-
-1. Establish the **midnight level** (midnight open) and the **midnight deviation** off that level
-   as the anchor for the day's setup.
-2. Go to a **much larger timeframe** first and map areas of significant confluence (buying/selling
-   pressure, liquidity, structure) around price.
-3. **Scale down** through timeframes, refining those same areas into tighter and tighter zones.
-4. Look for the point where the **midnight deviation aligns with a refined, multi-timeframe
-   confluence zone** — that alignment is the entry trigger, with the goal of a tight/precise stop
-   and a large target (historically 1:6–1:10 R).
-5. Confluences are individually weighted and the weights are expected to change as we backtest —
-   `knowledge/confluences.yaml` is built specifically to make that fast to edit.

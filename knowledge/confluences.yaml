@@ -10,6 +10,14 @@
 # these all default to weight 50 / status testing regardless of how the source material described
 # their importance — weighting is deliberately deferred to a later pass.
 #
+# 2026-08-19 (later same day): midnight_deviation, ote, and volume_expansion_pattern marked
+# `deprecated` — dropped per trader's decision. The discretion required to draw them consistently
+# (manipulation-leg identification, OTE swing-point selection) was judged too inconsistent to
+# build a model around. Pivoting to a trend-following approach built on the remaining structural
+# ICT confluences (FVG/IFVG/BPR/OB/BB/RB/IRB/structure/liquidity) instead. Their docs
+# (midnight-deviation-method.md, ote-method.md) are kept for reference, not deleted, in case any
+# of it turns out useful later — but they are no longer part of the active model.
+#
 # Fields:
 #   id          - short stable identifier (used in pinescript/backtests, don't rename casually)
 #   name        - human readable name
@@ -37,7 +45,7 @@ confluences:
       mechanism for entries — the model looks for this to align with a refined, scaled-down
       confluence zone.
     weight: 50
-    status: testing
+    status: deprecated
     notes:
       - "2026-08-19: full marking method has multiple cases (single reversal candle vs. a run of
          several same-color candles before the shift) — see midnight-deviation-method.md. Method
@@ -164,16 +172,20 @@ confluences:
          confluence — weighted above neutral pending backtest data."
 
   - id: exit_htf_support_resistance
-    name: Exit via Other Midnight-Deviation Levels / HTF S&R
+    name: Exit via HTF Support/Resistance
     category: filter
-    timeframe: HTF + midnight-deviation levels
+    timeframe: HTF confluence zones
     description: >
-      No fixed take-profit rule. Exit is managed against other midnight deviation levels and
-      broader higher-timeframe support/resistance around the trade, or on signs of price
-      reversing against the position. This governs trade management, not entry.
+      No fixed take-profit rule. Exit is managed against higher-timeframe support/resistance
+      confluence zones around the trade, or on signs of price reversing against the position.
+      This governs trade management, not entry.
     weight: 50
     status: testing
-    notes: []
+    notes:
+      - "2026-08-19: originally framed around midnight-deviation levels specifically; reworded
+         after midnight_deviation was deprecated. The general principle (manage exits against
+         other confluence zones / reversal signs, no fixed TP) still holds independent of
+         midnight-dev."
 
   - id: ote
     name: OTE (Optimal Trade Entry)
@@ -185,7 +197,7 @@ confluences:
       level or another confluence (e.g. a rejection block's 0.5). See ote-method.md for full
       detail — swing-point selection is highly discretionary.
     weight: 55
-    status: testing
+    status: deprecated
     notes:
       - "2026-08-19: trader-supplied probability ranking is 0.78 (highest) > 0.66/0.7 > 0.62
          (lowest) — note this differs from textbook ICT convention (0.62 sweet spot); we go with
@@ -219,7 +231,7 @@ confluences:
       drawdown -> ~700 tick expansion (OTE + rejection block 0.5 confluence). Anecdotal so far —
       log dated instances in examples.md as they occur.
     weight: 50
-    status: testing
+    status: deprecated
     notes:
       - "2026-08-19: only two anecdotal data points so far, not yet statistically validated."
 

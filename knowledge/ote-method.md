@@ -1,3 +1,7 @@
+> **ARCHIVED 2026-08-19.** Dropped from the active model — swing-point selection discretion was
+> judged too inconsistent to build a reliable system around, same reasoning as the midnight
+> deviation drop. Kept here for reference only.
+
 # OTE (Optimal Trade Entry) — Method
 
 A second fib-based tool, separate from (but used *alongside*) the midnight deviation. Referenced

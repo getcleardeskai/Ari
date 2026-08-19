@@ -3,92 +3,72 @@
 ## Instrument
 - **Market:** NQ (E-mini Nasdaq-100 futures)
 - **Sizing instrument:** MNQ (Micro NQ) — used for position sizing/testing
-- **Why MNQ matters:** its behavior around the midnight open is central to this model; midnight
-  price action is treated as a key structural reference, not just a session marker.
 
-## Framework
+## Current direction (as of 2026-08-19)
 
-### 1. Midnight Level & Midnight Deviation
-- The **midnight open** (price at 00:00, exchange/reference timezone TBD — confirm and lock this
-  in `confluences.yaml` once decided) is charted as a level for the session.
-- The **midnight deviation** is the move price makes away from that level — this deviation is the
-  primary timing/anchor mechanism for entries.
+The model went through two pivots, in order:
 
-### 2. Top-down confluence mapping
-- Start on a **large/higher timeframe** (HTF) and identify areas of significant confluence —
-  zones with substantial historical buying or selling pressure (structure, liquidity, whatever
-  specific tools/concepts we define in `confluences.yaml`).
-- **Scale down** through progressively smaller timeframes, re-testing/refining those same areas
-  each step down, so a broad HTF zone becomes a tight, precise LTF zone.
+1. **2026-08-19, earlier:** the original midnight-deviation + OTE framework (see "Archived
+   approach" below) was judged too hard to encode as deterministic Pine Script in one shot —
+   decision made to build a codeable baseline first.
+2. **2026-08-19, later:** midnight deviation and OTE were **dropped entirely**, not just
+   deferred — the discretion required to draw them consistently (which method to use, where
+   exactly the manipulation leg or swing point is) was judged too inconsistent to build a reliable
+   system around. Current direction: a **trend-following model built on the remaining structural
+   ICT confluences** — market structure/bias, FVG, iFVG, BPR, Order Block, Breaker Block,
+   Rejection Block, Inverse Rejection Block, liquidity concepts (ERL/IRL, STH/STL/ITH/ITL) — with
+   entries driven by trend + confluence stacking rather than a specific midnight-anchored timing
+   mechanism.
+
+## Framework (current)
+
+### 1. Trend / bias
+- Market structure (BOS for continuation, MSS/COS/ChoCH for reversal — see `ict-glossary.md`)
+  sets directional bias. Still regarded as the most important single factor.
+
+### 2. Confluence detection & clustering
+- Rather than manually marking each PDA (FVG/OB/RB/etc.) on each timeframe, the working approach
+  is now **automated clustering**: detect every active/unmitigated confluence zone, and whenever
+  several land within a tight price band of each other, treat that as one high-probability
+  refined area. See `pinescript/confluence-cluster.pine` — this is the first concrete
+  implementation of that idea (currently single-timeframe; multi-timeframe scaling is the planned
+  next step, still following the **timeframe ladder**:
+
+  ```
+  Daily -> 4H -> 1H -> 45m -> 30m -> 15m -> 5m (final refinement)
+  ```
 
 ### 3. Alignment = entry
-- The trade trigger is the **alignment** of:
-  a) the midnight deviation (timing/anchor), with
-  b) a confluence zone that has survived the top-down refinement process (location/precision).
-- When both line up, the model expects a very tight, well-defined stop loss and a large
-  target — historically **1:6 to 1:10 (sometimes 1:1**0**) reward-to-risk**.
+- Same core principle as before the pivot: multiple independent confluences landing in the same
+  tight area is what makes a zone worth trading, not any single confluence alone. What changed is
+  *how* that alignment gets found (automated clustering vs. a midnight-anchored manual process)
+  and that midnight timing/OTE are no longer part of the "what to align" set.
 
-### 4. Precision requirement
-- Because targets are large relative to risk, **entry precision is critical** — imprecise entries
-  either get stopped out on noise or blow the R:R math. This is the reason confluences need to be
-  individually weighted and constantly re-ranked rather than treated as a flat checklist.
+See `confluences.yaml` for the full, weighted, editable registry — `midnight_deviation`, `ote`,
+and `volume_expansion_pattern` are marked `deprecated` there, everything structural remains
+active/testing.
 
-## Confluence vocabulary
+## Entry trigger & trade management
 
-Confluences are described in **ICT (Inner Circle Trader) terminology**:
+Still open — see `open-questions.md`. Pre-pivot notes said: no fixed R:R, entry needs a
+volume-spike reaction, exit managed against HTF S&R or reversal signs. Whether that still holds
+in a pure trend/structural-confluence model (vs. specifically midnight-anchored) needs revisiting.
 
-- **Market structure / bias** — Break of Structure (BOS), Change of Character (CHoCH), and trend
-  read on the Daily. Called out by the trader as likely the single most important factor, since
-  it sets directional bias before anything else is considered.
-- **Previous session liquidity** — prior day/session high and low.
-- **Fair Value Gap (FVG)** / **Inverse FVG (iFVG)**
-- **Balanced Price Range (BPR)**
-- **Rejection Block**
-- **Order Block**
+## Archived approach (pre-2026-08-19 pivot)
 
-All of the above (except market structure, which is Daily-based) get scaled down through the
-**timeframe ladder**:
+The original framework anchored entries to a **midnight deviation** (a specific 5m-candle + fib
+method) aligned with a **top-down HTF→LTF confluence zone**, refined further with an **OTE** fib.
+Full detail is preserved in `midnight-deviation-method.md` and `ote-method.md` in case anything
+from it becomes useful again, but neither is part of the active model.
 
-```
-Daily -> 4H -> 1H -> 45m -> 30m -> 15m -> 5m (final refinement)
-```
+## Working documents
 
-See `confluences.yaml` for the full, weighted, editable registry of these.
-
-## Midnight deviation — marking method
-
-The midnight deviation is not just "distance from the midnight open" — it's marked using a
-specific 5-minute-candle + fib method with a couple of variant cases (single reversal candle vs.
-a run of same-direction candles, plus a distinct trend-day variant). Full detail lives in
-`midnight-deviation-method.md` — that doc is still partially unconfirmed pending a worked chart
-example from the trader.
-
-## Entry trigger & trade management (no fixed R:R)
-
-- **Entry:** there is no fixed risk:reward entry rule. The trigger is an **immediate, high-volume
-  spike/reaction at or around** the level where the midnight deviation aligns with a refined
-  confluence zone. No reaction = no entry, even if the levels line up.
-- **Exit / management:** no fixed take-profit rule either. Trade is managed against **other
-  midnight deviation levels** and broader **higher-timeframe support/resistance**, or closed on
-  signs of price reversing against the position.
-- Historical R:R outcomes (1:6–1:10) are a result of this process, not a target set in advance.
-
-## What's still open / to define as we go
-
-See `open-questions.md` for the full running list. Resolved as of 2026-08-19: midnight timezone
-(00:00 UTC-4/New York), trend-day handling (trade normally; re-anchor off a new swing if price
-"ignores" the original deviation).
-
-## 2026-08-19 — pivot to a codeable baseline first
-
-Trader flagged that the full discretionary model (manipulation legs, OTE swing selection, etc.)
-is extremely hard to encode as deterministic Pine Script in one shot. Decision: build a **basic,
-working trend-following strategy first** (simple, backtestable in the TradingView Strategy
-Tester today) as a scaffold, then iteratively layer the ICT/midnight-deviation confluences on top
-of it rather than trying to ship the full discretionary model as v1. See `pinescript/` for the
-starting strategy. The knowledge docs above remain the target model to work toward — they are not
-invalidated, just not the literal v1 implementation.
-
-This file should stay high-level. Individual confluence definitions, weights, and status live in
-`confluences.yaml`. Concrete trade examples live in `examples.md`. The midnight-marking mechanics
-live in `midnight-deviation-method.md`.
+- `confluences.yaml` — the confluence registry (weights/status).
+- `ict-glossary.md` — definitions for every ICT concept in use.
+- `trade-strength-framework.md` — general confluence-stacking checklist.
+- `examples.md` — trade/reference examples.
+- `open-questions.md` — running list of what's still unresolved.
+- `midnight-deviation-method.md`, `ote-method.md`, `automation-requirements.md` — archived/
+  pre-pivot, kept for reference (automation-requirements.md's alerting ideas may still be
+  relevant once the confluence-cluster approach is further along — revisit rather than assume
+  moot).

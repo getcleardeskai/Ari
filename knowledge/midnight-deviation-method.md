@@ -1,3 +1,8 @@
+> **ARCHIVED 2026-08-19.** Dropped from the active model — the discretion required to draw this
+> consistently (Method A vs. B choice, manipulation-leg identification) was judged too
+> inconsistent to build a reliable system around. Pivoted to a trend-following approach built on
+> the structural ICT confluences instead (see `model-overview.md`). Kept here for reference only.
+
 # Midnight Deviation — Marking Method
 
 How the midnight deviation level/zone is actually drawn. This is the anchor referenced by the
