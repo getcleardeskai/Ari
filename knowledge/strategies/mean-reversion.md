@@ -7,21 +7,27 @@ to eventually confirm/deny it.
 
 ## Indicators involved
 
-- **MRC** ("the big outward band") — a wide, multi-level gradient channel around price. This is
-  the overextension indicator: price tagging the outer edge of the band = overextended.
-  **Exact formula unknown** — this isn't a Pine built-in, it's a specific community indicator.
-  Plan: approximate it as a basis line + multiple ATR-or-stdev-scaled bands (visually similar
-  gradient channel), then compare against the real MRC on your chart and adjust. If you know the
-  exact indicator name/author or its settings, that would let us match it exactly instead of
-  approximating — send it if you have it handy, otherwise we proceed with the approximation.
+- **MRC** ("the big outward band") — **RESOLVED 2026-08-19**, trader supplied the actual source:
+  "Mean Reversion Channel" by fareidzulkifli (Pine v4, MPL 2.0, publicly shared). It's an Ehlers
+  SuperSmoother of `hlc3` (default) over a 200-bar lookback as the mean line, with band width =
+  SuperSmoother of True Range over the same lookback, scaled by `pi * multiplier` — inner band
+  multiplier 1.0, outer band multiplier 2.415. Only **2** real band levels (inner R1/S1, outer
+  R2/S2), not 3 — an earlier ATR-multiple approximation was wrong on both the formula shape and
+  the band count, which is why the first backtest attempt produced zero trades. Now ported exactly
+  in `../../pinescript/auto-reversion-strategy.pine`.
 - **200-period moving average** (the white line running through price) — the bias/validity
-  filter, not the overextension signal itself.
+  filter, not the overextension signal itself. Separate from MRC's own internal mean line (MRC
+  uses `hlc3` + SuperSmoother, this bias filter is a plain SMA of `close`).
 - **Hawkeye Volume** — the volume histogram at the bottom with a white average-volume line. We
   don't need to replicate the full Hawkeye indicator (it does its own bar-by-bar climax
   classification) — the actual rule used here only needs **current volume vs. its own moving
-  average**, which is simple to build directly (`volume >= ta.sma(volume, N)` or similar).
-- **QQE** — same signal engine already built for the trend strategy (smoothed RSI + ATR-trailing
-  band crossover) — reused here as the entry trigger.
+  average**, which is simple to build directly (`volume >= ta.sma(volume, N)`).
+- **QQE** — **RESOLVED 2026-08-19**, trader supplied the actual source: "QQE signals" by colinmck
+  (Pine v4, MPL 2.0). Same underlying RSI/EMA/ATR math as the trend strategy's QQE, but the signal
+  itself is extracted differently — a counter that increments while the trend-line/RSI
+  relationship holds and resets to 0 otherwise; the signal fires on the bar the counter first hits
+  1 (i.e. the relationship just turned true). This is subtly different from `ta.crossover` and is
+  now matched exactly in the Pine port.
 
 ## Setup validity — ALL of the following must be true (long example; short is the exact mirror)
 
@@ -72,13 +78,18 @@ channel, a volume-vs-its-average check, QQE, close-confirmed entries, tick or st
 stops, band-level take-profit) is standard, buildable Pine. The only real open item is getting the
 MRC band math to actually match your specific indicator — everything else is mechanical.
 
-## What's still open before coding
+## What's still open
 
-- [ ] MRC exact formula/settings (or confirm the ATR/stdev-band approximation is close enough).
+- [x] MRC exact formula — resolved, see above.
+- [x] QQE exact signal logic — resolved, see above.
 - [ ] Stop-loss: fixed ticks vs. last swing low/high — which, and if fixed, confirm ~25 ticks.
-- [ ] Take-profit: which specific band level counts as "the tip of that upper band."
-- [ ] Volume average length (Hawkeye's default, or whatever you're actually using).
-- [ ] How many candles counts as "the next couple" for delayed volume confirmation (2? 3?).
+      (Both implemented as a toggle, defaulting to fixed-ticks.)
+- [ ] Take-profit: which specific band level — defaulted to the outer band (R2/S2), matching "the
+      second band" (inner=1st, outer=2nd). Confirm or correct once backtest results are in.
+- [ ] Volume average length (Hawkeye's default, or whatever you're actually using) — defaulted to
+      20.
+- [ ] How many candles counts as "the next couple" for delayed volume confirmation — defaulted to
+      3.
 
 ## Reference examples (from chart screenshots, 2026-08-19)
 

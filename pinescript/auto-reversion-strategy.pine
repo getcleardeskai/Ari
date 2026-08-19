@@ -20,15 +20,23 @@
 //               confirmation within that window = the setup is invalidated.
 //   5. TIMING : entries only fire on a CONFIRMED bar close, never mid-bar.
 //
-// IMPORTANT CAVEAT: "MRC" (the outward gradient band) is not a Pine
-// built-in — its exact formula/settings are unknown here, so this script
-// APPROXIMATES it as a basis line + 3 ATR-scaled bands. Compare the plotted
-// bands against your real MRC indicator and adjust basisLen/mrcAtrLen/the
-// band multiples until they line up. Several other specifics (which band
-// level is the TP target, the volume confirmation window length, fixed vs.
-// swing-based stop) are also open per the trader's own notes — all exposed
-// as inputs with a documented default rather than hard-coded, specifically
-// so they're easy to correct.
+// UPDATE 2026-08-19: MRC and QQE are now EXACT ports of the trader's actual
+// source scripts (fareidzulkifli's "Mean Reversion Channel" and colinmck's
+// "QQE signals"), converted from Pine v4 to v6. MRC's mean line is an
+// Ehlers SuperSmoother of hlc3 over 200 bars; the band width is a
+// SuperSmoothed True Range scaled by pi*multiplier (inner = pi*1.0, outer =
+// pi*2.415) — NOT a simple ATR-multiple channel, which is why the earlier
+// approximated version produced zero trades (the bands didn't remotely line
+// up with real price behavior). There are only 2 real band levels here
+// (inner R1/S1, outer R2/S2), not 3. QQE's signal is a counter-based "just
+// turned true" check (matches the source exactly), not ta.crossover — subtly
+// different timing, now fixed to match. Only the default "SuperSmoother"
+// filter type is implemented (that's the source's own default) — the
+// alternate filter types (Gaussian/Butterworth/etc.) are not ported.
+// Still open per the trader's own notes: which band level is the TP target
+// (defaulted to the outer band, matching "the second band" — inner=1st,
+// outer=2nd), the volume confirmation window length, fixed vs. swing-based
+// stop — all exposed as inputs.
 //
 // No painting (barstate.isconfirmed gating) and no re-entries (pyramiding=0
 // + position-size checks) follow the same pattern as trend-bias-qqe-strategy.pine.
@@ -45,14 +53,13 @@ strategy("Auto Reversion Strategy", overlay = true, pyramiding = 0,
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
-grpMRC = "MRC (approximated)"
-basisLen   = input.int(20, "Basis length", minval = 1, group = grpMRC)
-mrcAtrLen  = input.int(14, "MRC ATR length", minval = 1, group = grpMRC)
-bandMult1  = input.float(1.0, "Band 1 (inner) x ATR", minval = 0.1, step = 0.1, group = grpMRC)
-bandMult2  = input.float(2.0, "Band 2 (mid) x ATR", minval = 0.1, step = 0.1, group = grpMRC)
-bandMult3  = input.float(3.0, "Band 3 (outer) x ATR", minval = 0.1, step = 0.1, group = grpMRC)
-entryBandLevel = input.int(3, "Entry/overextension band level (1-3)", minval = 1, maxval = 3, group = grpMRC)
-tpBandLevel    = input.int(2, "Take-profit band level (1-3)", minval = 1, maxval = 3, group = grpMRC)
+grpMRC = "MRC (exact port)"
+mrcSource  = input.source(hlc3, "Price source", group = grpMRC)
+mrcLength  = input.int(200, "Lookback period", minval = 1, group = grpMRC)
+innerMult  = input.float(1.0, "Inner channel size multiplier", minval = 0.1, group = grpMRC)
+outerMult  = input.float(2.415, "Outer channel size multiplier", minval = 0.1, group = grpMRC)
+entryBandLevel = input.int(2, "Entry/overextension band level (1=inner, 2=outer)", minval = 1, maxval = 2, group = grpMRC)
+tpBandLevel    = input.int(2, "Take-profit band level (1=inner, 2=outer)", minval = 1, maxval = 2, group = grpMRC)
 
 grpBias = "Bias (200 MA)"
 maLen = input.int(200, "Bias MA length", minval = 1, group = grpBias)
@@ -78,32 +85,41 @@ colBear = input.color(#f23645, "Bearish color", group = grpColor)
 tick = syminfo.mintick
 
 // ---------------------------------------------------------------------------
-// MRC approximation
+// MRC — exact port of fareidzulkifli's "Mean Reversion Channel" (SuperSmoother
+// variant, the source's own default). Mean line = SuperSmoother(source, len);
+// band width = SuperSmoother(True Range, len) * pi * multiplier.
 // ---------------------------------------------------------------------------
-basis  = ta.sma(hl2, basisLen)
-mrcAtr = ta.atr(mrcAtrLen)
+f_supersmoother(src, len) =>
+    a1 = math.exp(-math.sqrt(2) * math.pi / len)
+    b1 = 2 * a1 * math.cos(math.sqrt(2) * math.pi / len)
+    c3 = -math.pow(a1, 2)
+    c2 = b1
+    c1 = 1 - c2 - c3
+    var float ss = na
+    ss := c1 * src + c2 * nz(ss[1], src[1]) + c3 * nz(ss[2], src[2])
+    ss
 
-upper1 = basis + mrcAtr * bandMult1
-upper2 = basis + mrcAtr * bandMult2
-upper3 = basis + mrcAtr * bandMult3
-lower1 = basis - mrcAtr * bandMult1
-lower2 = basis - mrcAtr * bandMult2
-lower3 = basis - mrcAtr * bandMult3
+meanline = f_supersmoother(mrcSource, mrcLength)
+meanrange = f_supersmoother(ta.tr, mrcLength)
 
-pUpper1 = plot(upper1, "MRC Upper 1", color = color.new(colBear, 70))
-pUpper2 = plot(upper2, "MRC Upper 2", color = color.new(colBear, 55))
-pUpper3 = plot(upper3, "MRC Upper 3", color = color.new(colBear, 40))
-pLower1 = plot(lower1, "MRC Lower 1", color = color.new(colBull, 70))
-pLower2 = plot(lower2, "MRC Lower 2", color = color.new(colBull, 55))
-pLower3 = plot(lower3, "MRC Lower 3", color = color.new(colBull, 40))
-plot(basis, "MRC Basis", color = color.new(color.gray, 30))
-fill(pUpper1, pUpper2, color = color.new(colBear, 88))
-fill(pUpper2, pUpper3, color = color.new(colBear, 82))
-fill(pLower1, pLower2, color = color.new(colBull, 88))
-fill(pLower2, pLower3, color = color.new(colBull, 82))
+multInner = math.pi * innerMult
+multOuter = math.pi * outerMult
+
+upper1 = meanline + meanrange * multInner
+lower1 = meanline - meanrange * multInner
+upper2 = meanline + meanrange * multOuter
+lower2 = meanline - meanrange * multOuter
+
+pMean   = plot(meanline, "MRC Mean", color = color.new(#FFCD00, 0), linewidth = 2)
+pUpper1 = plot(upper1, "MRC R1 (inner)", color = color.new(color.green, 50))
+pLower1 = plot(lower1, "MRC S1 (inner)", color = color.new(color.green, 50))
+pUpper2 = plot(upper2, "MRC R2 (outer)", color = color.new(color.red, 50))
+pLower2 = plot(lower2, "MRC S2 (outer)", color = color.new(color.red, 50))
+fill(pUpper1, pUpper2, color = color.new(color.red, 88))
+fill(pLower1, pLower2, color = color.new(color.green, 88))
 
 f_bandAt(level, upperSide) =>
-    band = level == 1 ? (upperSide ? upper1 : lower1) : level == 2 ? (upperSide ? upper2 : lower2) : (upperSide ? upper3 : lower3)
+    band = level == 1 ? (upperSide ? upper1 : lower1) : (upperSide ? upper2 : lower2)
     band
 
 entryUpperBand = f_bandAt(entryBandLevel, true)
@@ -112,13 +128,13 @@ tpUpperBand    = f_bandAt(tpBandLevel, true)
 tpLowerBand    = f_bandAt(tpBandLevel, false)
 
 // ---------------------------------------------------------------------------
-// Bias — 200 MA fully below/above the entire (outermost) MRC band
+// Bias — 200 MA fully below/above the entire (outer) MRC band
 // ---------------------------------------------------------------------------
 maVal = ta.sma(close, maLen)
 plot(maVal, "Bias MA", color = color.new(color.white, 0), linewidth = 2)
 
-biasLongOk  = maVal < lower3
-biasShortOk = maVal > upper3
+biasLongOk  = maVal < lower2
+biasShortOk = maVal > upper2
 
 // ---------------------------------------------------------------------------
 // Location — setup candle tags the entry band level
@@ -127,7 +143,10 @@ locationLongOk  = low <= entryLowerBand
 locationShortOk = high >= entryUpperBand
 
 // ---------------------------------------------------------------------------
-// QQE signal (same engine as trend-bias-qqe-strategy.pine)
+// QQE signal — exact port of colinmck's "QQE signals". Fires on the bar the
+// trend-line/RSI relationship FIRST flips (a counter that resets to 0
+// whenever the condition is false, signal = counter just hit 1) — not the
+// same as ta.crossover, matches the source's own logic precisely.
 // ---------------------------------------------------------------------------
 rsiVal   = ta.rsi(close, rsiLen)
 rsiMa    = ta.ema(rsiVal, rsiSmooth)
@@ -149,8 +168,13 @@ shortBand := (rsiMa[1] < shortBand[1] and rsiMa < shortBand[1]) ? math.min(short
 qqeTrend := ta.cross(rsiMa, shortBand[1]) ? 1 : ta.cross(longBand[1], rsiMa) ? -1 : nz(qqeTrend[1], 1)
 fastAtrRsiTL = qqeTrend == 1 ? longBand : shortBand
 
-qqeCrossUp   = ta.crossover(rsiMa, fastAtrRsiTL)
-qqeCrossDown = ta.crossunder(rsiMa, fastAtrRsiTL)
+var int qqeXLongCount  = 0
+var int qqeXShortCount = 0
+qqeXLongCount  := fastAtrRsiTL < rsiMa ? qqeXLongCount + 1 : 0
+qqeXShortCount := fastAtrRsiTL > rsiMa ? qqeXShortCount + 1 : 0
+
+qqeCrossUp   = qqeXLongCount == 1
+qqeCrossDown = qqeXShortCount == 1
 
 qqeLongSignal  = qqeCrossUp and barstate.isconfirmed
 qqeShortSignal = qqeCrossDown and barstate.isconfirmed

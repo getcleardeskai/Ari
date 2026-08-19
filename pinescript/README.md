@@ -10,12 +10,13 @@ multi-band channel (overextension) + QQE entry signal + a volume-vs-average conf
 (with a "pending" grace period if volume doesn't confirm on the signal bar itself). ATR/tick stop,
 band-level take-profit.
 
-**Biggest caveat:** "MRC" isn't a Pine built-in — its exact formula is unknown here, so the bands
-are approximated (basis + 3 ATR-scaled levels). Compare against the real MRC on your chart and
-tune `basisLen`/`mrcAtrLen`/the band multiples until they line up before trusting the backtest
-numbers. Several other specifics (TP band level, volume confirmation window length, fixed vs.
-swing stop) are exposed as inputs with a documented default rather than hard-coded — see the
-file's own header comment.
+**Update 2026-08-19:** MRC and QQE are now exact ports of the trader's actual source scripts
+(fareidzulkifli's Mean Reversion Channel, colinmck's QQE signals), not approximations — the
+earlier ATR-multiple approximation was the wrong shape entirely (real MRC uses an Ehlers
+SuperSmoother mean line + SuperSmoothed-True-Range bands scaled by `pi * multiplier`), which is
+almost certainly why the first version produced zero trades. Several specifics are still open
+(TP band level, volume confirmation window length, fixed vs. swing stop) — exposed as inputs with
+a documented default rather than hard-coded, see the file's own header comment.
 
 **How to use it:** TradingView → open an MNQ1! or NQ1! chart → Pine Editor → paste this file's
 contents → Add to Chart → Strategy Tester tab. Hand-written, not yet run through TradingView's
