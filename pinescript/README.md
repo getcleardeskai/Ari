@@ -2,37 +2,44 @@
 
 Strategies/indicators implementing the model from `../knowledge/model-overview.md`.
 
-## `basic-trend-strategy.pine`
+## `confluence-viewer.pine` — current focus
 
-First scaffold (2026-08-19) — a simple EMA-crossover trend-following strategy with an ATR-based
-stop/target, meant to backtest cleanly in the TradingView Strategy Tester. Superseded in
-direction (not deleted) by `confluence-cluster.pine` below, which is where active development is
-now — this one stays as the simplest possible baseline to fall back to.
+Current focus (2026-08-19) — a pure **visualization indicator**: pulls Structure (BOS/MSS-ChoCH),
+Fair Value Gaps, an approximate POC, and auto trendlines from a higher timeframe (default 1H,
+configurable) and plots them directly on whatever chart you're actually viewing (e.g. 1m). Goal
+is to just *see* the confluences clearly, not to backtest or cluster them.
 
-## `confluence-cluster.pine`
+**Behavior:**
+- Structure labels (BOS/MSS), the POC line, and trendlines are permanent historical markers —
+  they don't get deleted once price passes them.
+- FVG boxes DO get removed, but only once the **current chart's** close fully trades through
+  them (reached + reacted to), not just gotten close.
 
-Current focus (2026-08-19) — an **indicator** (not a strategy/backtester) that detects individual
-ICT PDAs — Fair Value Gaps, Order Blocks, Rejection Blocks — tracks which are still active
-(unmitigated), and whenever several land within a configurable price band (default 50 ticks) of
-each other, draws one box around the combined area labeled with every confluence type found
-inside it. This is the automated version of "go find where a lot of confluence stacks into one
-tight area."
+**v1 scope:** Structure, FVG, approximate POC, auto trendlines (last 2 swing highs/lows). NOT yet
+included: Order Block, BPR, IFVG, Breaker Block, liquidity levels (STH/STL/ITH/ITL, prior session
+high/low) — see `../knowledge/ict-glossary.md`. Structure detection is a simplified swing-break
+model (BOS = break of last swing in bias direction, MSS/ChoCH = break against it), not the full
+Protected-High/Low model from the glossary yet. POC is a close-price/volume approximation using
+the current chart's own bars, not a true tick-level volume profile.
 
-**Current scope/limitations (v1):**
-- Single timeframe only — runs on whatever timeframe the chart is on. Multi-timeframe scaling
-  (pulling FVG/OB/RB from Daily/4H/1H/etc. via `request.security` into the same cluster pass,
-  per the ladder in `../knowledge/model-overview.md`) is the natural next step, not yet built.
-- Only 3 zone types so far: FVG, Order Block, Rejection Block. Not yet included: BPR, IFVG,
-  Breaker Block, structure highs/lows (STH/STL/ITH/ITL), previous session liquidity — see
-  `../knowledge/ict-glossary.md` for what those are. Straightforward to add once this base
-  version is validated.
-- Order Block detection is simplified (last opposite-color candle before a displacement candle
-  defined by ATR multiple) rather than the full structure-break-aware ICT definition.
-- Zones are considered "mitigated" (removed from tracking) on a full close through them; this
-  version doesn't yet flip a mitigated zone into an IFVG/Breaker/IRB the way the real concepts do
-  — that's future work.
+**How to use it:** TradingView → open an MNQ1! or NQ1! chart → Pine Editor → paste this file's
+contents → Add to Chart. Set "Higher timeframe" in the input panel (default 1H) — everything is
+computed from that timeframe and displayed on whatever chart you're looking at. This is
+hand-written and not yet run through TradingView's compiler — if it throws a syntax error on
+first load, send me the exact error text and I'll fix it immediately.
 
-**How to use it:** open TradingView → open an MNQ1! or NQ1! chart → Pine Editor → paste this
-file's contents → Add to Chart. It's an indicator, so it draws directly on the chart rather than
-running in the Strategy Tester. Tune detection sensitivity and the cluster tolerance/min-zone-
-count via the input panel.
+## `confluence-cluster.pine` — earlier iteration, kept for reference
+
+An earlier attempt (2026-08-19, same day) that instead *merges* nearby confluences into one
+combined box when several stack within a tick tolerance. Superseded by `confluence-viewer.pine`
+above for the main "just show me everything clearly" goal, but the clustering approach might be
+useful again later (e.g. as a "hot zone" overlay once individual confluences are trusted). Same
+single-timeframe/3-zone-type limitations as before — see the file's own header comment.
+
+## `basic-trend-strategy.pine` — first scaffold, kept for reference
+
+The very first script (2026-08-19) — a simple EMA-crossover trend-following **strategy** (not an
+indicator) with an ATR-based stop/target, backtestable in the TradingView Strategy Tester. Not
+the current direction (the actual goal turned out to be visualization, not a backtestable
+strategy), but kept as the simplest possible baseline in case a strategy/backtest angle comes
+back into play later.

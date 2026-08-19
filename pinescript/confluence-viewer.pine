@@ -1,0 +1,224 @@
+//@version=5
+// ============================================================================
+// Confluence Viewer
+//
+// A pure visualization indicator — NOT a strategy, NOT a clustering tool.
+// Pulls structure, FVGs, a session POC, and auto trendlines from a HIGHER
+// timeframe (default 1H) and plots them directly on whatever chart you're
+// actually viewing (e.g. 1m), so you can see confluences at a glance.
+//
+// Behavior, per spec:
+//   - Structure events (BOS/MSS), the POC, and trendlines are historical
+//     markers — they are NOT deleted once price passes them, they just stay
+//     so you can see how structure evolved.
+//   - FVG zones ARE removed, but only once price on the CURRENT chart
+//     actually trades through (closes beyond) them — i.e. once it's
+//     reached/reacted to, not just "gotten near."
+//
+// v1 scope: Structure (BOS/MSS/ChoCH), Fair Value Gap, an approximate
+// session/HTF-period POC, and auto trendlines off the last two swing
+// highs/lows. NOT yet included: Order Block, BPR, IFVG, Breaker Block,
+// liquidity levels (STH/STL/ITH/ITL, prior session high/low) — see
+// ../knowledge/ict-glossary.md for what those are; straightforward to add
+// once this base version is checked against a real chart.
+// ============================================================================
+indicator("Confluence Viewer (HTF Structure/FVG/POC/TL)", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+htf = input.timeframe("60", "Higher timeframe (structure/FVG/POC/TL source)")
+
+grpStruct = "Structure"
+showStructure = input.bool(true, "Show BOS / MSS (ChoCH)", group = grpStruct)
+pivotLen      = input.int(5, "Swing pivot length (bars)", minval = 2, group = grpStruct)
+
+grpFVG = "Fair Value Gap"
+showFVG     = input.bool(true, "Show FVGs", group = grpFVG)
+minGapTicks = input.float(2.0, "Ignore FVGs smaller than (ticks)", minval = 0, group = grpFVG)
+
+grpPOC = "POC"
+showPOC       = input.bool(true, "Show approximate POC per HTF period", group = grpPOC)
+pocBucketTicks = input.float(10, "POC bucket size (ticks)", minval = 1, group = grpPOC)
+
+grpTL = "Trendlines"
+showTL = input.bool(true, "Show auto trendlines (last 2 swing highs/lows)", group = grpTL)
+
+tick = syminfo.mintick
+
+// a new HTF period just started on this bar => the previous HTF bar just closed
+htfChanged = ta.change(time(htf)) != 0
+
+// ============================================================================
+// STRUCTURE (BOS / MSS) — computed on the HTF, evaluated with request.security
+// Simplified model: tracks the last confirmed swing high/low; a close beyond
+// it in the current bias direction = BOS (continuation), a close beyond it
+// against the current bias = MSS/ChoCH (reversal), and bias flips. This is a
+// simplification of the full Protected-High/Low nuance in ict-glossary.md —
+// good enough to see structure at a glance, not a precise PLC/PL model yet.
+// ============================================================================
+f_structure(len) =>
+    var float swingHigh = na
+    var float swingLow  = na
+    var int   bias       = 0     // 0 unknown, 1 bullish, -1 bearish
+    var int   evt         = 0    // 0 none, 1 BOS up, 2 BOS down, 3 MSS up, 4 MSS down
+    var float evtPrice    = na
+
+    evt := 0
+    evtPrice := na
+
+    ph = ta.pivothigh(high, len, len)
+    pl = ta.pivotlow(low, len, len)
+    if not na(ph)
+        swingHigh := ph
+    if not na(pl)
+        swingLow := pl
+
+    if not na(swingHigh) and close > swingHigh and close[1] <= swingHigh
+        evt := bias == -1 ? 3 : 1
+        evtPrice := swingHigh
+        bias := 1
+        swingHigh := na
+
+    if not na(swingLow) and close < swingLow and close[1] >= swingLow
+        evt := bias == 1 ? 4 : 2
+        evtPrice := swingLow
+        bias := -1
+        swingLow := na
+
+    [evt, evtPrice]
+
+[structEvt, structEvtPrice] = request.security(syminfo.tickerid, htf, f_structure(pivotLen))
+
+if showStructure and htfChanged and structEvt != 0
+    isUp = structEvt == 1 or structEvt == 3
+    isMSS = structEvt == 3 or structEvt == 4
+    txt = isMSS ? (isUp ? "MSS/ChoCH ↑" : "MSS/ChoCH ↓") : (isUp ? "BOS ↑" : "BOS ↓")
+    col = isMSS ? color.orange : (isUp ? color.new(color.lime, 0) : color.new(color.red, 0))
+    label.new(x = bar_index, y = structEvtPrice, text = txt, style = isUp ? label.style_label_down : label.style_label_up, color = col, textcolor = color.black, size = size.small)
+
+// ============================================================================
+// FVG — detected on the HTF (same 3-candle gap logic as before), boxes drawn
+// on the current chart, deleted only when the CURRENT chart's close trades
+// fully through them.
+// ============================================================================
+f_fvg() =>
+    bull = low > high[2]
+    bear = high < low[2]
+    [bull, low, high[2], bear, low[2], high]
+
+[fvgBull, fvgBullTop, fvgBullBottom, fvgBear, fvgBearTop, fvgBearBottom] = request.security(syminfo.tickerid, htf, f_fvg())
+
+var array<box> fvgBoxes  = array.new<box>()
+var array<float> fvgTop    = array.new<float>()
+var array<float> fvgBottom = array.new<float>()
+var array<int>   fvgBias   = array.new<int>()   // 1 = bullish/support, -1 = bearish/resistance
+
+if showFVG and htfChanged and fvgBull and (fvgBullTop - fvgBullBottom) >= minGapTicks * tick
+    b = box.new(left = bar_index, top = fvgBullTop, bottom = fvgBullBottom, right = bar_index, border_color = color.new(color.green, 40), bgcolor = color.new(color.green, 88), extend = extend.right)
+    array.push(fvgBoxes, b)
+    array.push(fvgTop, fvgBullTop)
+    array.push(fvgBottom, fvgBullBottom)
+    array.push(fvgBias, 1)
+
+if showFVG and htfChanged and fvgBear and (fvgBearTop - fvgBearBottom) >= minGapTicks * tick
+    b = box.new(left = bar_index, top = fvgBearTop, bottom = fvgBearBottom, right = bar_index, border_color = color.new(color.red, 40), bgcolor = color.new(color.red, 88), extend = extend.right)
+    array.push(fvgBoxes, b)
+    array.push(fvgTop, fvgBearTop)
+    array.push(fvgBottom, fvgBearBottom)
+    array.push(fvgBias, -1)
+
+// mitigation: remove once the CURRENT chart's close fully trades through
+fi = array.size(fvgBoxes) - 1
+while fi >= 0
+    bias_i = array.get(fvgBias, fi)
+    mitigated = (bias_i == 1 and close < array.get(fvgBottom, fi)) or (bias_i == -1 and close > array.get(fvgTop, fi))
+    if mitigated
+        box.delete(array.get(fvgBoxes, fi))
+        array.remove(fvgBoxes, fi)
+        array.remove(fvgTop, fi)
+        array.remove(fvgBottom, fi)
+        array.remove(fvgBias, fi)
+    fi -= 1
+
+// ============================================================================
+// POC (approximate) — per HTF period, bucket the CURRENT chart's own
+// close/volume into price buckets, and mark the highest-volume bucket once
+// the period closes. This is a lightweight close-price approximation, not a
+// true tick-level volume profile.
+// ============================================================================
+var array<float> pocBucketPrice = array.new<float>()
+var array<float> pocBucketVol   = array.new<float>()
+var int periodStartBar = bar_index
+
+bucketSize = pocBucketTicks * tick
+
+f_pocAddBar(price, vol) =>
+    key = math.round(price / bucketSize) * bucketSize
+    idx = -1
+    for k = 0 to array.size(pocBucketPrice) - 1
+        if array.get(pocBucketPrice, k) == key
+            idx := k
+    if idx >= 0
+        array.set(pocBucketVol, idx, array.get(pocBucketVol, idx) + vol)
+    else
+        array.push(pocBucketPrice, key)
+        array.push(pocBucketVol, vol)
+    true
+
+if showPOC
+    if htfChanged and array.size(pocBucketPrice) > 0
+        maxIdx = array.indexof(pocBucketVol, array.max(pocBucketVol))
+        pocPrice = array.get(pocBucketPrice, maxIdx)
+        line.new(x1 = periodStartBar, y1 = pocPrice, x2 = bar_index - 1, y2 = pocPrice, color = color.new(color.purple, 0), width = 2, style = line.style_solid)
+        label.new(x = bar_index - 1, y = pocPrice, text = "POC", style = label.style_label_left, color = color.new(color.purple, 0), textcolor = color.white, size = size.tiny)
+        array.clear(pocBucketPrice)
+        array.clear(pocBucketVol)
+        periodStartBar := bar_index
+
+    f_pocAddBar(close, volume)
+
+// ============================================================================
+// TRENDLINES — auto-connect the last two HTF swing highs, and separately the
+// last two HTF swing lows. Redrawn (old one deleted) each time a new pivot
+// arrives, using bar_time so HTF pivots line up correctly on the LTF chart.
+// ============================================================================
+f_pivots(len) =>
+    var float ph1 = na
+    var float ph2 = na
+    var int   pht1 = na
+    var int   pht2 = na
+    var float pl1 = na
+    var float pl2 = na
+    var int   plt1 = na
+    var int   plt2 = na
+
+    ph = ta.pivothigh(high, len, len)
+    pl = ta.pivotlow(low, len, len)
+
+    if not na(ph)
+        ph2 := ph1
+        pht2 := pht1
+        ph1 := ph
+        pht1 := time[len]
+
+    if not na(pl)
+        pl2 := pl1
+        plt2 := plt1
+        pl1 := pl
+        plt1 := time[len]
+
+    [ph1, pht1, ph2, pht2, pl1, plt1, pl2, plt2]
+
+[tlPH1, tlPHt1, tlPH2, tlPHt2, tlPL1, tlPLt1, tlPL2, tlPLt2] = request.security(syminfo.tickerid, htf, f_pivots(pivotLen))
+
+var line tlHighLine = na
+var line tlLowLine  = na
+
+if showTL and htfChanged
+    if not na(tlPH1) and not na(tlPH2)
+        line.delete(tlHighLine)
+        tlHighLine := line.new(x1 = tlPHt2, y1 = tlPH2, x2 = tlPHt1, y2 = tlPH1, xloc = xloc.bar_time, color = color.new(color.red, 20), width = 1, extend = extend.right, style = line.style_dashed)
+    if not na(tlPL1) and not na(tlPL2)
+        line.delete(tlLowLine)
+        tlLowLine := line.new(x1 = tlPLt2, y1 = tlPL2, x2 = tlPLt1, y2 = tlPL1, xloc = xloc.bar_time, color = color.new(color.lime, 20), width = 1, extend = extend.right, style = line.style_dashed)
