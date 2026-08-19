@@ -65,7 +65,8 @@ rsiSmooth = input.int(5, "RSI smoothing (EMA)", minval = 1, group = grpQQE)
 qqeFactor = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group = grpQQE)
 
 grpRisk = "Risk / Exit"
-stopTicks = input.float(70, "Stop loss (ticks)", minval = 1, group = grpRisk)
+stopTicks   = input.float(70, "Stop loss (ticks)", minval = 1, group = grpRisk)
+cooldownBars = input.int(10, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
 
 grpColor = "Colors"
 colBull = input.color(#089981, "Bullish color", group = grpColor)
@@ -218,6 +219,26 @@ qqeLongSignal  = qqeCrossUp   and barstate.isconfirmed
 qqeShortSignal = qqeCrossDown and barstate.isconfirmed
 
 // ---------------------------------------------------------------------------
+// Cooldown — blocks a brand-new entry for N bars after a position closes.
+// Without this, a choppy stretch right at the band edge can whipsaw into
+// several trades back-to-back (touch -> signal -> quick stop/target ->
+// re-touch -> new signal -> repeat), which is what produced the cluttered
+// stack of tiny +2/-2 trades on the chart. A signal that occurs during
+// cooldown is NOT consumed/wasted — the touch stays armed and waits for the
+// next fresh signal once the cooldown clears.
+// ---------------------------------------------------------------------------
+var int barsSinceFlat = 999999
+var float prevPosSizeForCooldown = 0.0
+if barstate.isconfirmed
+    if prevPosSizeForCooldown != 0 and strategy.position_size == 0
+        barsSinceFlat := 0
+    else
+        barsSinceFlat += 1
+    prevPosSizeForCooldown := strategy.position_size
+
+cooldownOk = barsSinceFlat >= cooldownBars
+
+// ---------------------------------------------------------------------------
 // Setup — persistent touch, not same-bar. Once price has touched the outer
 // band, remember that; take the next QQE long/short signal whenever it
 // comes (same bar or many bars later), as long as bias is true AT THAT
@@ -238,10 +259,10 @@ if barstate.isconfirmed
 
 doLongEntry  = false
 doShortEntry = false
-if barstate.isconfirmed and biasLongOk and touchedLower and qqeLongSignal
+if barstate.isconfirmed and biasLongOk and touchedLower and qqeLongSignal and cooldownOk
     doLongEntry := true
     touchedLower := false   // consumed
-if barstate.isconfirmed and biasShortOk and touchedUpper and qqeShortSignal
+if barstate.isconfirmed and biasShortOk and touchedUpper and qqeShortSignal and cooldownOk
     doShortEntry := true
     touchedUpper := false   // consumed
 

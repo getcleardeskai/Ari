@@ -113,6 +113,15 @@ and the signal — which can happen near the band boundary without the setup act
 invalid. Removed that reset; touch now only clears once consumed by an actual entry, and bias is
 only required to hold at the moment the signal fires, not continuously from touch through signal.
 
+**2026-08-19, later still again:** chart showed a dense cluster of overlapping trade markers
+(TradingView's own automatic strategy trade labels, not something the script draws — toggle off
+via chart Style → uncheck "Trade" if they're just visual clutter) with tiny ±2 tick P&L each —
+the strategy was whipsawing several trades back-to-back in a choppy stretch right at the band
+edge (touch → signal → quick stop/target → re-touch → new signal → repeat). Added a **cooldown**
+(`cooldownBars`, default 10) that blocks a new entry for N bars after any position closes. A
+signal that occurs during cooldown isn't wasted — the touch stays armed and waits for the next
+fresh signal once the cooldown clears.
+
 The diagnostic funnel table and rule toggles from the debugging phase were removed from the
 script now that the ruleset is settled — they did their job (found the real bugs) and would just
 be clutter now. Can be added back if useful once shorts/volume are reintroduced.
