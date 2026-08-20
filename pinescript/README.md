@@ -117,6 +117,17 @@ them keeps holding — clearing only when the bias itself breaks or a matching s
 touch. Also removed two small pieces of dead code (`crossLongBand`/`crossShortBand`, an unused
 `ThreshHold` input) while in there.
 
+**2026-08-20, reverted:** trader pasted back the earlier "price-in-gap filter + TP target dot"
+version (the state right before the stop level was ever added — no stop, no opacity system, no TP
+always-bottom, and neither of the two ground-up session rewrites) and said to undo everything since
+then: "this one was golden," it caught a trade the later TPT-session/inner-band-TP rewrite had
+missed. File restored to that exact content — direction-agnostic-bug already fixed, price-in-gap
+filter present (same-bar check, no touch memory), TP target dot tracking the opposite outer band,
+no stop-loss logic at all, hardcoded QQE label colors. The same-bar touch/signal bug described just
+above still exists in this restored version (it predates that fix) — left as-is per the explicit
+revert request, not silently reapplied; flagged in case the trader wants that specific fix layered
+back on top of this version once behavior here is confirmed good.
+
 **How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →
 Add to Chart. Hand-written, not yet run through TradingView's compiler — send me the exact error
 text if it throws one on first load.
