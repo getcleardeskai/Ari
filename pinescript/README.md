@@ -2,6 +2,22 @@
 
 Strategies/indicators implementing the model from `../knowledge/automation-architecture.md`.
 
+## `mrc-and-200ma-indicator.pine` — visual-only, MRC + 200 MA in one script
+
+Added 2026-08-20. A plain **indicator** (no entries, no strategy logic) that combines
+fareidzulkifli's MRC and the 200-period bias MA into a single chart overlay, so they don't need to
+be stacked as two separate indicators. The MRC is trimmed down to exactly 4 lines — outer
+upper/lower (R2/S2) and inner upper/lower (R1/S1) — dropping the original public script's
+9-segment gradient shading, multi-timeframe table, and alternate filter types. Same exact
+SuperSmoother math as the strategy scripts below (outer mult 1.5, inner mult 1.0, 200-bar
+lookback), same MA (SMMA/200 by default). Toggle to also show the MRC's own internal mean line
+(off by default, since only the 4 bands were asked for) and to turn the between-band shading on
+or off.
+
+**How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →
+Add to Chart. Hand-written, not yet run through TradingView's compiler — send me the exact error
+text if it throws one on first load.
+
 ## `mrc-gap-qqe-strategy.pine` — literal 6-rule version, added 2026-08-20
 
 A fresh, minimal strategy built to read as closely as possible to the trader's plain-language

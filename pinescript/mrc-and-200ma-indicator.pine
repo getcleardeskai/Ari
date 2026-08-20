@@ -1,0 +1,87 @@
+//@version=6
+// ============================================================================
+// MRC (Inner/Outer Bands Only) + 200 MA — combined indicator
+//
+// One chart overlay instead of stacking two separate indicators:
+//   - MRC ("Mean Reversion Channel", fareidzulkifli, SuperSmoother variant,
+//     exact port) trimmed down to exactly 4 lines — outer upper/lower
+//     (R2/S2) and inner upper/lower (R1/S1). The original public script's
+//     9-segment gradient shading, multi-timeframe table, and alternate
+//     filter types (Ehlers EMA/Gaussian/Butterworth/etc.) are all dropped —
+//     just the two bands on each side, as asked.
+//   - The 200-period bias MA (SMMA by default, i.e. ta.rma — matches the
+//     white line already used in `auto-reversion-strategy.pine` and
+//     `mrc-gap-qqe-strategy.pine`) plotted on top.
+//
+// Pure visualization — no entries, no strategy.*, nothing tradeable here.
+// See ../knowledge/strategies/mean-reversion.md for the strategy scripts
+// that use this same MRC + MA combination to actually trade.
+//
+// Hand-written, not run through TradingView's compiler on my end — if it
+// throws an error on first load, send the exact error text.
+// ============================================================================
+indicator("MRC (In/Out Bands) + 200 MA", overlay = true, max_lines_count = 500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+grpMRC = "MRC (exact port, inner/outer bands only)"
+mrcSource = input.source(hlc3, "Price source", group = grpMRC)
+mrcLength = input.int(200, "Lookback period", minval = 1, group = grpMRC)
+innerMult = input.float(1.0, "Inner channel size multiplier", minval = 0.1, group = grpMRC)
+outerMult = input.float(1.5, "Outer channel size multiplier", minval = 0.1, group = grpMRC)
+showMean  = input.bool(false, "Also show MRC mean line", group = grpMRC)
+showFill  = input.bool(true, "Shade between inner and outer band", group = grpMRC)
+
+grpMA = "200 MA"
+maLen  = input.int(200, "MA length", minval = 1, group = grpMA)
+maType = input.string("SMMA", "MA type", options = ["SMMA", "SMA"], group = grpMA)
+
+grpColor = "Colors"
+colInner = input.color(color.green, "Inner band color", group = grpColor)
+colOuter = input.color(color.red, "Outer band color", group = grpColor)
+colMean  = input.color(#FFCD00, "Mean line color", group = grpColor)
+colMA    = input.color(color.white, "MA color", group = grpColor)
+
+// ---------------------------------------------------------------------------
+// MRC — exact port of fareidzulkifli's SuperSmoother variant
+// ---------------------------------------------------------------------------
+f_supersmoother(src, len) =>
+    a1 = math.exp(-math.sqrt(2) * math.pi / len)
+    b1 = 2 * a1 * math.cos(math.sqrt(2) * math.pi / len)
+    c3 = -math.pow(a1, 2)
+    c2 = b1
+    c1 = 1 - c2 - c3
+    var float ss = na
+    ss := c1 * src + c2 * nz(ss[1], src[1]) + c3 * nz(ss[2], src[2])
+    ss
+
+meanline  = f_supersmoother(mrcSource, mrcLength)
+meanrange = f_supersmoother(ta.tr, mrcLength)
+
+multInner = math.pi * innerMult
+multOuter = math.pi * outerMult
+
+upperInner = meanline + meanrange * multInner   // R1
+lowerInner = meanline - meanrange * multInner   // S1
+upperOuter = meanline + meanrange * multOuter   // R2
+lowerOuter = meanline - meanrange * multOuter   // S2
+
+// ---------------------------------------------------------------------------
+// 200 MA
+// ---------------------------------------------------------------------------
+maVal = maType == "SMMA" ? ta.rma(close, maLen) : ta.sma(close, maLen)
+
+// ---------------------------------------------------------------------------
+// Plots
+// ---------------------------------------------------------------------------
+pInnU = plot(upperInner, "MRC R1 (inner)", color = color.new(colInner, 30), linewidth = 1)
+pInnL = plot(lowerInner, "MRC S1 (inner)", color = color.new(colInner, 30), linewidth = 1)
+pOutU = plot(upperOuter, "MRC R2 (outer)", color = color.new(colOuter, 20), linewidth = 1)
+pOutL = plot(lowerOuter, "MRC S2 (outer)", color = color.new(colOuter, 20), linewidth = 1)
+
+fill(pInnU, pOutU, color = showFill ? color.new(colOuter, 88) : na, title = "Upper band shade")
+fill(pInnL, pOutL, color = showFill ? color.new(colInner, 88) : na, title = "Lower band shade")
+
+plot(showMean ? meanline : na, "MRC Mean", color = color.new(colMean, 0), linewidth = 2)
+plot(maVal, "200 MA", color = color.new(colMA, 0), linewidth = 2)
