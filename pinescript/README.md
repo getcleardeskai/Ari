@@ -61,6 +61,38 @@ bottom, QQE colors exposed:**
 4. **QQE colors:** `colQQELong`/`colQQEShort` inputs replace the hardcoded green/red on the
    Long/Short labels.
 
+**2026-08-20, ground-up rewrite — trade tracking + session-based exit:** trader took a pass at
+rewriting this file directly (adding session logic, a flat hard-tick stop, TP-band-by-location) but
+reported it back "takes no trades... can't even see SL or TP." Root cause: the draft's
+`entryLong`/`entryShort` required `inSession` (the full "0930-1600" window) to be true for ANY
+entry — restricting trading to a ~5.5 hour daytime window. With futures trading nearly 24/5 and
+the trader testing overnight/extended hours, that gate alone produced zero entries; with zero
+entries `tradeDirection` never left 0, so the TP/SL lines (which only plot when a trade is active)
+never had anything to draw — same root cause explaining both complaints at once.
+
+Rebuilt on top of the trader's own draft, keeping its structure and intent, fixing:
+- **Entries no longer require `inSession`.** Blocked ONLY in the `sessionBufferMinutes` window
+  right before the session's close (`blockedNow`, built as a standalone session string covering
+  just that window, e.g. "1540-1600" — checkable at any hour, not just while already in-session).
+  Matches "not take trades within 20 minutes of market close" literally, not "only trade market
+  hours." `sessionEnded` (the RTH-window closing) still force-flattens any open trade ("stop out on
+  market session change").
+- **Stop-loss simplified to a flat hard-tick distance** (`hardStopTicks`, default 250, no
+  band-following/lock complexity) — the old MRC-band-following stop logic was removed entirely per
+  request.
+- **TP band selection:** outer band (R2/S2) if price was outside the MRC when the signal fired,
+  inner band (R1/S1, the closer one) if price was inside — this was already correct in the
+  trader's draft, kept as-is.
+- **Opacity actually wired for every plot** — the Mean line and 200 SMMA plots bypassed
+  `color.new()` entirely in the draft (raw color, no opacity effect at all); now every element
+  routes through it, plus two new inputs (`meanOpacity`, `maOpacity`) to control them.
+- **Decluttering added:** `declutter` + `idleOpacity` (default 90% transparent) fades the MRC
+  bands/mean/SMMA/shading whenever nothing is active, snapping back to each element's own
+  configured opacity the instant the SMMA goes light-blue or a trade is open
+  (`conditionsActive = maOutsideMRC or tradeDirection != 0`).
+- QQE Long/Short colors (`qqeLongColor`/`qqeShortColor`) were already exposed correctly in the
+  trader's draft, unchanged.
+
 Pure visual indicator, no `strategy.*` — plots signals and alerts only, doesn't trade.
 
 **How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →
