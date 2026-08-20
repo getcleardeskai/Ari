@@ -16,10 +16,9 @@
 //              side).
 //   2. TOUCH : price has touched the true outer band (the far edge of the
 //              gradient zone) within the last touchLookbackBars bars
-//              (default 3) — the touch and the signal don't need to be the
-//              same candle, but it has to be recent, not any time in the
-//              past (2026-08-20, simplified from an earlier persistent-flag
-//              design that could fire on a touch from way earlier).
+//              (default 500, effectively "however long it takes" — see
+//              2026-08-20 note below) — the touch and the signal don't need
+//              to be the same candle.
 //   3. SIGNAL: once touched, wait (however long it takes) for a QQE
 //              long/short signal. It does not need to print while price is
 //              still inside/touching the band — only that a touch happened
@@ -91,7 +90,7 @@ useStop          = input.bool(true, "Use stop loss", group = grpRisk)
 stopTicks        = input.float(75, "Stop loss (ticks)", minval = 1, group = grpRisk)
 useMrcTarget     = input.bool(true, "Use MRC inner-band take-profit", group = grpRisk)
 cooldownBars     = input.int(0, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
-touchLookbackBars = input.int(3, "Touch must have happened within this many bars", minval = 0, group = grpRisk)
+touchLookbackBars = input.int(500, "Touch must have happened within this many bars", minval = 0, group = grpRisk)
 biasConfirmBars = input.int(3, "Bias must hold for this many consecutive bars", minval = 1, group = grpRisk)
 
 grpColor = "Colors"
@@ -302,10 +301,23 @@ cooldownOk = barsSinceFlat >= cooldownBars
 // Setup — 2026-08-20, simplified: instead of a persistent "touched" flag
 // that can live forever (and fire on a touch from way earlier, far from
 // where price currently is — see the "why does it go short in the middle"
-// case), just look back a small fixed window. At the moment of a signal,
-// check whether price touched the outer band within the last
-// touchLookbackBars bars (0 = same bar only). No state to track/consume —
-// recomputed fresh every bar with ta.barssince.
+// case), just look back a fixed window. At the moment of a signal, check
+// whether price touched the outer band within the last touchLookbackBars
+// bars (0 = same bar only). No state to track/consume — recomputed fresh
+// every bar with ta.barssince.
+//
+// 2026-08-20, later: default widened from 3 to 500 bars (effectively
+// unbounded). A sharp spike wick can tag the outer band and snap straight
+// back, with the QQE signal not actually confirming the reversal until well
+// after price has already moved back toward the middle of the channel —
+// legitimately more than a few bars later, confirmed by a chart example
+// where the real long signal printed well outside a 3-bar window. The
+// original worry that motivated a short window (a stale touch from way
+// earlier firing an unrelated later signal) is already covered by bias
+// being re-checked fresh at entry time above, so a tight cap here was
+// solving a problem that no longer exists while creating a new one
+// (missed valid trades). Left as a tunable input, not hardcoded, in case a
+// tighter window is wanted later.
 // ---------------------------------------------------------------------------
 barsSinceTouchLower = ta.barssince(low <= lower2_1)
 barsSinceTouchUpper = ta.barssince(high >= upper2_1)

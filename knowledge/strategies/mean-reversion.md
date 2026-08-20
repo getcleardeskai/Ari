@@ -245,6 +245,16 @@ the existing stateless `biasLongConfirmed`/`touchedLowerRecent` (etc.) booleans 
 Core entry/exit logic (bias streak, barssince touch lookback, confirmed-close TP, intrabar stop)
 is unchanged.
 
+**2026-08-20, touch lookback widened back out:** trader sent a chart annotated with the actual
+failure — a sharp spike wick tagged the outer band and snapped straight back, and the real QQE
+long signal didn't confirm the reversal until well after price had already moved back up through
+the middle of the channel, clearly more than `touchLookbackBars` (3) bars later. Default widened
+to 500 (effectively unbounded, back to the original "wait however long it takes" rule). The
+narrow 3-bar window was solving a problem (a stale touch from way earlier firing an unrelated
+later signal) that's already covered by bias being re-checked fresh at entry time — so it was
+only costing valid trades, not preventing anything. Left as a tunable input for anyone who wants
+a tighter window later.
+
 ## Reference examples (from chart screenshots, 2026-08-19)
 
 - **Valid long example** (2nd screenshot, Micro Gold Futures, 1m): 200 MA below MRC, candle
