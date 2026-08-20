@@ -95,6 +95,28 @@ Rebuilt on top of the trader's own draft, keeping its structure and intent, fixi
 
 Pure visual indicator, no `strategy.*` — plots signals and alerts only, doesn't trade.
 
+**2026-08-20, another ground-up rewrite — TPT session logic, flat tick stop, TP-by-location:**
+trader wrote yet another independent version directly (dropped the RTH-restriction bug from the
+previous rewrite entirely — this one correctly used `hour(time, "America/New_York")`/
+`minute(time, "America/New_York")` from the start, a cleaner approach than the session-string
+surgery in the version before it) with: no session restriction at all except a "TPT" 5pm ET flat
+deadline (new trades blocked in the 20 minutes before, any open trade force-cleared at the
+deadline itself), a flat configurable tick stop-loss, and TP fixed to the inner band
+(R1 for longs, S1 for shorts, tracked live). Reported back "does everything I want, just doesn't
+take as many trades as it could" with a chart example of a missed setup.
+
+**Root cause:** `qqeLong`/`qqeShort` required the price-in-gap touch (`gapLongOk`/`gapShortOk`)
+and the QQE cross to land on the exact same bar. QQE (RSI-smoothed + ATR trailing band) is
+inherently laggy — its counter often doesn't hit 1 until several bars after price already wicked
+into the gap and started pulling back, so by the actual signal bar price is usually back inside
+the zone and the same-bar check silently fails on a perfectly valid setup. (Same root bug already
+found and fixed once before in this project, in `auto-reversion-strategy.pine` — reintroduced here
+in a fresh independent rewrite.) Fixed with touch memory: `longArmed`/`shortArmed` persist across
+however many bars it takes for the signal to print, as long as the bias (SMMA side) that armed
+them keeps holding — clearing only when the bias itself breaks or a matching signal consumes the
+touch. Also removed two small pieces of dead code (`crossLongBand`/`crossShortBand`, an unused
+`ThreshHold` input) while in there.
+
 **How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →
 Add to Chart. Hand-written, not yet run through TradingView's compiler — send me the exact error
 text if it throws one on first load.

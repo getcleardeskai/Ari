@@ -1,179 +1,364 @@
 //@version=6
-
 // ============================================================================
 // MRC (In/Out Bands) + 200 SMMA + QQE
 //
-// 2026-08-20 — trader-driven rewrite (session-based exit, hard-tick stop,
-// TP-band-by-location, opacity, decluttering). Root cause of "takes no
-// trades / can't see TP or SL" in the previous draft: `entryLong`/
-// `entryShort` required `inSession` (the full "0930-1600" window) to be
-// true for ANY entry to fire. That restricts trading to ~5.5 hours a day —
-// with zero entries, `tradeDirection` never leaves 0, so TP/SL (which only
-// plot when a trade is active) never had anything to draw. Fixed below:
-// entries are now blocked ONLY in the N-minute window right before the
-// session's close, not gated on being inside the session at all — matches
-// "not take trades within 20 minutes of market close" literally, not
-// "only trade during market hours."
+// MRC:
+//   R1 / S1 = Inner channel
+//   R2 / S2 = Outer channel
+//
+// 200 SMMA:
+//   Completely independent of MRC
+//   Uses ta.rma(close, 200)
+//   WHITE = SMMA inside MRC
+//   LIGHT BLUE = SMMA outside outer MRC
+//
+// QQE:
+//   Long  = SMMA below S2 + price reaches lower gap
+//   Short = SMMA above R2 + price reaches upper gap
+//
+//   2026-08-20 FIX: the gap touch and the QQE cross used to have to land on
+//   the SAME bar (`gapLongOk`/`gapShortOk` only looked at that bar's
+//   high/low). QQE is an RSI-smoothed, ATR-trailing-band signal — it's
+//   inherently laggy, so its counter often doesn't hit 1 until a few bars
+//   AFTER price already wicked into the gap and started pulling back. By
+//   the signal bar, price is usually back inside the zone, so the same-bar
+//   check silently failed even on genuinely valid setups — missed trades,
+//   not a filter working as intended. Fixed with `longArmed`/`shortArmed`:
+//   a touch that happens while the bias (SMMA side) already holds stays
+//   "armed" across however many bars it takes for the QQE signal to
+//   actually print, clearing only when the bias itself breaks (SMMA back
+//   inside/flipped) or the signal consumes it.
+//
+// TP:
+//   LONG  -> R1 / Upper Inner Band
+//   SHORT -> S1 / Lower Inner Band
+//   TP follows the inner band dynamically.
+//
+// SL:
+//   Fixed N ticks from entry (input, default 100).
+//   No MRC-distance/buffer logic.
+//
+// TPT SESSION LOGIC:
+//   Trades are allowed during the full futures trading session,
+//   including overnight / Asia.
+//
+//   New trades are blocked during the final 20 minutes before
+//   the TPT 5:00 PM ET flat deadline.
+//
+//   Any active tracked trade is cleared at 5:00 PM ET so it
+//   cannot be carried through the TPT cutoff.
+//
 // ============================================================================
 
-indicator("MRC (In/Out Bands) + 200 SMMA + QQE", overlay = true, max_lines_count = 500)
+indicator(
+     "MRC (In/Out Bands) + 200 SMMA + QQE",
+     overlay = true,
+     max_lines_count = 500)
+
 
 // ============================================================================
-// MRC
+// MRC INPUTS
 // ============================================================================
 
 grpMRC = "MRC"
 
-mrcSource = input.source(hlc3, "Price source", group = grpMRC)
-mrcLength = input.int(200, "Lookback period", minval = 1, group = grpMRC)
-innerMult = input.float(1.0, "Inner channel size multiplier", minval = 0.1, group = grpMRC)
-outerMult = input.float(2.415, "Outer channel size multiplier", minval = 0.1, group = grpMRC)
-showMean = input.bool(false, "Show MRC mean line", group = grpMRC)
-showFill = input.bool(true, "Shade between inner and outer bands", group = grpMRC)
+mrcSource = input.source(
+     hlc3,
+     "Price source",
+     group = grpMRC)
+
+mrcLength = input.int(
+     200,
+     "Lookback period",
+     minval = 1,
+     group = grpMRC)
+
+innerMult = input.float(
+     1.0,
+     "Inner channel size multiplier",
+     minval = 0.1,
+     group = grpMRC)
+
+outerMult = input.float(
+     2.415,
+     "Outer channel size multiplier",
+     minval = 0.1,
+     group = grpMRC)
+
+showMean = input.bool(
+     false,
+     "Show MRC mean line",
+     group = grpMRC)
+
+showFill = input.bool(
+     true,
+     "Shade between inner and outer bands",
+     group = grpMRC)
+
 
 // ============================================================================
-// 200 SMMA
+// 200 SMMA SETTINGS
 // ============================================================================
 
 grpMA = "200 SMMA"
 
-maLen = input.int(200, "SMMA length", minval = 1, group = grpMA)
-showMA = input.bool(true, "Show 200 SMMA", group = grpMA)
+maLen = input.int(
+     200,
+     "SMMA length",
+     minval = 1,
+     group = grpMA)
+
+showMA = input.bool(
+     true,
+     "Show 200 SMMA",
+     group = grpMA)
+
 
 // ============================================================================
-// COLORS
+// COLOR SETTINGS
 // ============================================================================
 
 grpColor = "Colors"
 
-colInner = input.color(color.green, "Inner band color", group = grpColor)
-colOuter = input.color(color.red, "Outer band color", group = grpColor)
-colMean = input.color(#FFCD00, "Mean line color", group = grpColor)
-colMA = input.color(color.white, "200 SMMA color", group = grpColor)
-colMAOutside = input.color(color.rgb(100, 181, 246), "200 SMMA outside color", group = grpColor)
+colInner = input.color(
+     color.green,
+     "Inner band color",
+     group = grpColor)
 
-colTP = input.color(color.orange, "TP line color", group = grpColor)
-colSL = input.color(color.fuchsia, "SL line color", group = grpColor)
+colOuter = input.color(
+     color.red,
+     "Outer band color",
+     group = grpColor)
+
+colMean = input.color(
+     #FFCD00,
+     "Mean line color",
+     group = grpColor)
+
+colMA = input.color(
+     color.white,
+     "200 SMMA color",
+     group = grpColor)
+
+colMAOutside = input.color(
+     color.rgb(100, 181, 246),
+     "200 SMMA outside color",
+     group = grpColor)
+
+colLong = input.color(
+     color.green,
+     "QQE Long color",
+     group = grpColor)
+
+colShort = input.color(
+     color.red,
+     "QQE Short color",
+     group = grpColor)
+
+colTP = input.color(
+     color.orange,
+     "TP target color",
+     group = grpColor)
+
+colSL = input.color(
+     color.fuchsia,
+     "Stop level color",
+     group = grpColor)
+
 
 // ============================================================================
-// OPACITY
-// ============================================================================
-//
-// Convention (matches the trader's own draft): these numbers ARE Pine's
-// `transparency` value directly — 0 = fully solid, 100 = fully invisible.
-//
-// 2026-08-20 FIX: the Mean line and 200 SMMA plots didn't pass through
-// color.new() at all in the last draft — they used the raw color input, so
-// their opacity sliders (meanOpacity/maOpacity, now added below) had zero
-// effect. Every plotted line now actually routes through its opacity input.
-//
-// 2026-08-20, also added: "quiet" decluttering. `idleOpacity` (default 90,
-// i.e. mostly faded) applies to the MRC bands / mean / SMMA / shading
-// whenever `conditionsActive` is false; each element's own opacity input
-// above takes back over the instant conditions go active (SMMA turns
-// light-blue, or a trade is open) — so the chart stays quiet until
-// something is actually worth looking at.
-// ============================================================================
-
-grpOpacity = "Opacity"
-
-innerOpacity = input.int(30, "Inner band opacity (active)", minval = 0, maxval = 100, group = grpOpacity)
-outerOpacity = input.int(20, "Outer band opacity (active)", minval = 0, maxval = 100, group = grpOpacity)
-fillOpacity = input.int(88, "MRC fill opacity (active)", minval = 0, maxval = 100, group = grpOpacity)
-meanOpacity = input.int(0, "Mean line opacity (active)", minval = 0, maxval = 100, group = grpOpacity)
-maOpacity = input.int(0, "200 SMMA opacity (active)", minval = 0, maxval = 100, group = grpOpacity)
-tpOpacity = input.int(0, "TP opacity", minval = 0, maxval = 100, group = grpOpacity)
-slOpacity = input.int(0, "SL opacity", minval = 0, maxval = 100, group = grpOpacity)
-
-declutter = input.bool(true, "Fade bands/mean/SMMA when no setup is active", group = grpOpacity)
-idleOpacity = input.int(90, "Idle opacity (bands/mean/SMMA when nothing active)", minval = 0, maxval = 100, group = grpOpacity)
-
-// ============================================================================
-// FILTERS
+// FILTER SETTINGS
 // ============================================================================
 
 grpFilters = "Filters"
 
-enableMASideFilter = input.bool(true, "Require SMMA on matching side", group = grpFilters)
-enablePriceGapFilter = input.bool(true, "Require price to reach MRC", group = grpFilters)
-gapFilterBand = input.string("Inner", "Price-in-gap check band", options = ["Inner", "Outer"], group = grpFilters)
+enableMASideFilter = input.bool(
+     true,
+     "Require SMMA on the matching side (outer band)",
+     group = grpFilters)
+
+enablePriceGapFilter = input.bool(
+     true,
+     "Require price to have wicked into the gap zone",
+     group = grpFilters)
+
+gapFilterBand = input.string(
+     "Inner",
+     "Price-in-gap check band",
+     options = ["Inner", "Outer"],
+     group = grpFilters)
+
 
 // ============================================================================
-// MARKET SESSION
-// ============================================================================
-//
-// `sessionInput` defines the daily window whose CLOSE matters for two
-// things: (1) force-flatten any open trade the moment this window ends
-// ("stop out on market session change"), and (2) block new entries in the
-// last `sessionBufferMinutes` before that close. Entries are NOT otherwise
-// restricted to this window — outside it (overnight/extended hours),
-// trading is unrestricted, since futures trade nearly 24/5 and this is a
-// "don't trade right into the close" rule, not an "only trade RTH" rule.
+// TPT SESSION / CUTOFF SETTINGS
 // ============================================================================
 
-grpSession = "Market Session"
+grpSession = "TPT Trading Hours"
 
-sessionInput = input.session("0930-1600", "Session (its close drives the flatten + buffer)", group = grpSession)
-sessionBufferMinutes = input.int(20, "Block new entries this many minutes before session close", minval = 0, group = grpSession)
+// TPT flat deadline.
+// Default = 5:00 PM New York time.
+tptCloseHour = input.int(
+     17,
+     "TPT flat deadline hour (New York)",
+     minval = 0,
+     maxval = 23,
+     group = grpSession)
 
-sessionCloseStr = str.substring(sessionInput, 5, 9)
+tptCloseMinute = input.int(
+     0,
+     "TPT flat deadline minute",
+     minval = 0,
+     maxval = 59,
+     group = grpSession)
 
-closeHour = int(str.tonumber(str.substring(sessionCloseStr, 0, 2)))
-closeMin = int(str.tonumber(str.substring(sessionCloseStr, 2, 4)))
+// Block new trades this many minutes before TPT cutoff.
+minutesBeforeClose = input.int(
+     20,
+     "Block new trades before TPT cutoff",
+     minval = 0,
+     group = grpSession)
 
-bufferedTotalMin = math.max((closeHour * 60 + closeMin) - sessionBufferMinutes, 0)
-bufferedHour = bufferedTotalMin / 60
-bufferedMin = bufferedTotalMin % 60
-
-f_pad2(n) => n < 10 ? "0" + str.tostring(n) : str.tostring(n)
-
-// A standalone session string covering ONLY the pre-close buffer window
-// (e.g. "1540-1600") — deliberately NOT anchored to the session's open, so
-// it's checkable at any hour of the day, not just while already "in session".
-preCloseWindow = f_pad2(bufferedHour) + f_pad2(bufferedMin) + "-" + sessionCloseStr
-
-inSession = not na(time(timeframe.period, sessionInput))
-sessionEnded = inSession[1] and not inSession   // the moment the session closes -> force flatten
-
-blockedNow = sessionBufferMinutes > 0 and not na(time(timeframe.period, preCloseWindow))
-
-// ============================================================================
-// HARD STOP
-// ============================================================================
-
-grpRisk = "Hard Stop"
-
-showSL = input.bool(true, "Show hard stop", group = grpRisk)
-hardStopTicks = input.int(250, "Hard stop distance (ticks)", minval = 1, group = grpRisk)
-tickOverride = input.float(0.0, "Tick size override (0 = symbol tick size)", minval = 0.0, group = grpRisk)
 
 // ============================================================================
-// QQE
+// STOP LOSS SETTINGS
+// ============================================================================
+
+grpRisk = "Stop Loss"
+
+// GENERAL FIXED STOP
+slTicks = input.int(
+     100,
+     "Stop loss (ticks)",
+     minval = 1,
+     group = grpRisk)
+
+showSL = input.bool(
+     true,
+     "Show stop level",
+     group = grpRisk)
+
+tickOverride = input.float(
+     0.0,
+     "Tick size override (0 = use symbol's own tick size)",
+     minval = 0.0,
+     group = grpRisk)
+
+
+// ============================================================================
+// QQE SETTINGS
 // ============================================================================
 
 grpQQE = "QQE"
 
-RSI_Period = input.int(14, "RSI Length", minval = 1, group = grpQQE)
-SF = input.int(5, "RSI Smoothing", minval = 1, group = grpQQE)
-QQE = input.float(4.238, "Fast QQE Factor", group = grpQQE)
-ThreshHold = input.int(10, "Thresh-hold", group = grpQQE)
-showTP = input.bool(true, "Show TP line", group = grpQQE)
+RSI_Period = input.int(
+     14,
+     title = "RSI Length",
+     group = grpQQE)
 
-qqeLongColor = input.color(color.green, "QQE Long color", group = grpQQE)
-qqeShortColor = input.color(color.red, "QQE Short color", group = grpQQE)
-qqeSignalOpacity = input.int(0, "QQE signal opacity", minval = 0, maxval = 100, group = grpQQE)
-qqeTextColor = input.color(color.white, "QQE signal text color", group = grpQQE)
+SF = input.int(
+     5,
+     title = "RSI Smoothing",
+     group = grpQQE)
+
+QQE = input.float(
+     4.238,
+     title = "Fast QQE Factor",
+     group = grpQQE)
+
+showTP = input.bool(
+     true,
+     title = "Show TP target",
+     group = grpQQE)
+
+
+// ============================================================================
+// NEW YORK TIME
+// ============================================================================
+
+nyHour = hour(
+     time,
+     "America/New_York")
+
+nyMinute = minute(
+     time,
+     "America/New_York")
+
+currentMinutes =
+     nyHour * 60 +
+     nyMinute
+
+tptCloseMinutes =
+     tptCloseHour * 60 +
+     tptCloseMinute
+
+minutesUntilTPTClose =
+     tptCloseMinutes -
+     currentMinutes
+
+
+// ============================================================================
+// TPT TRADING PERMISSION
+// ============================================================================
+//
+// IMPORTANT:
+//
+// There is NO 09:30-16:00 session restriction anymore.
+//
+// This means signals are allowed:
+//   - NY
+//   - London
+//   - Asia
+//   - Overnight
+//
+// The only daily restriction is the TPT cutoff window.
+//
+// Example with default settings:
+//
+//   4:39 PM ET  -> allowed
+//   4:40 PM ET  -> blocked
+//   4:50 PM ET  -> blocked
+//   4:59 PM ET  -> blocked
+//   5:00 PM ET  -> flat/reset
+//
+// ============================================================================
+
+tptCutoffWindow =
+     minutesUntilTPTClose >= 0 and
+     minutesUntilTPTClose <= minutesBeforeClose
+
+allowNewTrade =
+     not tptCutoffWindow
+
+
+// ============================================================================
+// FORCE RESET AT TPT CUTOFF
+// ============================================================================
+//
+// This prevents the indicator from visually carrying a trade through
+// the TPT cutoff.
+//
+// The actual market/session itself is handled separately by the broker.
+// ============================================================================
+
+tptCutoffReached =
+     currentMinutes >= tptCloseMinutes and
+     currentMinutes < tptCloseMinutes + 1
+
 
 // ============================================================================
 // SUPER SMOOTHER
 // ============================================================================
 
 f_supersmoother(src, len) =>
-    a1 = math.exp(-math.sqrt(2) * math.pi / len)
-    b1 = 2.0 * a1 * math.cos(math.sqrt(2) * math.pi / len)
+    a1 = math.exp(
+         -math.sqrt(2) * math.pi / len)
+
+    b1 = 2 * a1 * math.cos(
+         math.sqrt(2) * math.pi / len)
+
     c3 = -math.pow(a1, 2)
     c2 = b1
-    c1 = 1.0 - c2 - c3
+    c1 = 1 - c2 - c3
 
     var float ss = na
 
@@ -183,77 +368,160 @@ f_supersmoother(src, len) =>
 
     ss
 
+
 // ============================================================================
 // MRC CALCULATION
 // ============================================================================
 
-meanline = f_supersmoother(mrcSource, mrcLength)
-meanrange = f_supersmoother(ta.tr, mrcLength)
+meanline = f_supersmoother(
+     mrcSource,
+     mrcLength)
 
-multInner = math.pi * innerMult
-multOuter = math.pi * outerMult
+meanrange = f_supersmoother(
+     ta.tr,
+     mrcLength)
 
-upperInner = meanline + meanrange * multInner
-lowerInner = meanline - meanrange * multInner
 
-upperOuter = meanline + meanrange * multOuter
-lowerOuter = meanline - meanrange * multOuter
+// ============================================================================
+// MRC MULTIPLIERS
+// ============================================================================
+
+multInner =
+     math.pi * innerMult
+
+multOuter =
+     math.pi * outerMult
+
+
+// ============================================================================
+// MRC BANDS
+// ============================================================================
+
+// INNER
+
+upperInner =
+     meanline +
+     meanrange * multInner
+
+lowerInner =
+     meanline -
+     meanrange * multInner
+
+// OUTER
+
+upperOuter =
+     meanline +
+     meanrange * multOuter
+
+lowerOuter =
+     meanline -
+     meanrange * multOuter
+
 
 // ============================================================================
 // 200 SMMA
 // ============================================================================
 
-maVal = ta.rma(close, maLen)
+maVal = ta.rma(
+     close,
+     maLen)
 
-maBelowOuter = maVal < lowerOuter
-maAboveOuter = maVal > upperOuter
-maOutsideMRC = maBelowOuter or maAboveOuter
-
-maPlotColor = maOutsideMRC ? colMAOutside : colMA
 
 // ============================================================================
-// TRADE STATE — declared here (ahead of TRADE TRACKING further down) purely
-// so DECLUTTER STATE below can read `tradeDirection`. It's still only
-// ASSIGNED in the TRADE TRACKING section later in the script; reading it up
-// here just sees last bar's value until this bar's tracking logic runs
-// further down (one-bar lag on the opacity switch only, cosmetic).
+// SMMA / MRC RELATIONSHIP
 // ============================================================================
 
-var int tradeDirection = 0
-var float tradeEntry = na
-var float tradeTP = na
-var float tradeSL = na
-var bool tradeJustStarted = false
+maBelowOuter =
+     maVal < lowerOuter
 
-// ============================================================================
-// DECLUTTER STATE — drives the idle-vs-active opacity on the persistent
-// lines (bands/mean/SMMA/shading). "Active" = the SMMA is outside the
-// outer band (a setup could be forming) OR a trade is currently open.
-// ============================================================================
+maAboveOuter =
+     maVal > upperOuter
 
-conditionsActive = maOutsideMRC or tradeDirection != 0
+maOutsideMRC =
+     maBelowOuter or
+     maAboveOuter
+
+maPlotColor =
+     maOutsideMRC
+     ? colMAOutside
+     : colMA
+
 
 // ============================================================================
 // MRC PLOTS
 // ============================================================================
-//
-// f_eff() resolves each element's actual on-chart opacity: its own
-// "active" opacity input normally, or the shared `idleOpacity` whenever
-// `declutter` is on and nothing is currently active.
+
+pInnU = plot(
+     upperInner,
+     title = "MRC R1 (Inner)",
+     color = color.new(colInner, 30),
+     linewidth = 1)
+
+pInnL = plot(
+     lowerInner,
+     title = "MRC S1 (Inner)",
+     color = color.new(colInner, 30),
+     linewidth = 1)
+
+pOutU = plot(
+     upperOuter,
+     title = "MRC R2 (Outer)",
+     color = color.new(colOuter, 20),
+     linewidth = 1)
+
+pOutL = plot(
+     lowerOuter,
+     title = "MRC S2 (Outer)",
+     color = color.new(colOuter, 20),
+     linewidth = 1)
+
+
+// ============================================================================
+// MRC SHADING
 // ============================================================================
 
-f_eff(activeOp) => declutter and not conditionsActive ? idleOpacity : activeOp
+fill(
+     pInnU,
+     pOutU,
+     color = showFill
+         ? color.new(colOuter, 88)
+         : na,
+     title = "Upper MRC Shade")
 
-pInnU = plot(upperInner, "MRC R1 (Inner)", color = color.new(colInner, f_eff(innerOpacity)), linewidth = 1)
-pInnL = plot(lowerInner, "MRC S1 (Inner)", color = color.new(colInner, f_eff(innerOpacity)), linewidth = 1)
-pOutU = plot(upperOuter, "MRC R2 (Outer)", color = color.new(colOuter, f_eff(outerOpacity)), linewidth = 1)
-pOutL = plot(lowerOuter, "MRC S2 (Outer)", color = color.new(colOuter, f_eff(outerOpacity)), linewidth = 1)
+fill(
+     pInnL,
+     pOutL,
+     color = showFill
+         ? color.new(colInner, 88)
+         : na,
+     title = "Lower MRC Shade")
 
-fill(pInnU, pOutU, color = showFill ? color.new(colOuter, f_eff(fillOpacity)) : na, title = "Upper MRC Shade")
-fill(pInnL, pOutL, color = showFill ? color.new(colInner, f_eff(fillOpacity)) : na, title = "Lower MRC Shade")
 
-plot(showMean ? meanline : na, "MRC Mean", color = color.new(colMean, f_eff(meanOpacity)), linewidth = 2)
-plot(showMA ? maVal : na, "200 SMMA", color = color.new(maPlotColor, f_eff(maOpacity)), linewidth = 2)
+// ============================================================================
+// MRC MEAN
+// ============================================================================
+
+plot(
+     showMean
+         ? meanline
+         : na,
+     title = "MRC Mean",
+     color = color.new(colMean, 0),
+     linewidth = 2)
+
+
+// ============================================================================
+// 200 SMMA PLOT
+// ============================================================================
+
+plot(
+     showMA
+         ? maVal
+         : na,
+     title = "200 SMMA",
+     color = color.new(maPlotColor, 0),
+     linewidth = 2)
+
 
 // ============================================================================
 // QQE CALCULATION
@@ -261,217 +529,418 @@ plot(showMA ? maVal : na, "200 SMMA", color = color.new(maPlotColor, f_eff(maOpa
 
 src = close
 
-Wilders_Period = RSI_Period * 2 - 1
+Wilders_Period =
+     RSI_Period * 2 - 1
 
-Rsi = ta.rsi(src, RSI_Period)
-RsiMa = ta.ema(Rsi, SF)
+Rsi =
+     ta.rsi(
+         src,
+         RSI_Period)
 
-AtrRsi = math.abs(RsiMa[1] - RsiMa)
+RsiMa =
+     ta.ema(
+         Rsi,
+         SF)
 
-MaAtrRsi = ta.ema(AtrRsi, Wilders_Period)
+AtrRsi =
+     math.abs(
+         RsiMa[1] - RsiMa)
 
-dar = ta.ema(MaAtrRsi, Wilders_Period) * QQE
+MaAtrRsi =
+     ta.ema(
+         AtrRsi,
+         Wilders_Period)
+
+dar =
+     ta.ema(
+         MaAtrRsi,
+         Wilders_Period) * QQE
+
 
 // ============================================================================
 // QQE BANDS
 // ============================================================================
 
-var float longband = na
-var float shortband = na
+var float longband = 0.0
+var float shortband = 0.0
 var int trend = 0
 
 DeltaFastAtrRsi = dar
 RSIndex = RsiMa
 
-newshortband = RSIndex + DeltaFastAtrRsi
-newlongband = RSIndex - DeltaFastAtrRsi
+newshortband =
+     RSIndex +
+     DeltaFastAtrRsi
 
-longband := na(longband[1]) ?
-     newlongband :
-     RSIndex[1] > longband[1] and RSIndex > longband[1] ?
-     math.max(longband[1], newlongband) :
-     newlongband
+newlongband =
+     RSIndex -
+     DeltaFastAtrRsi
 
-shortband := na(shortband[1]) ?
-     newshortband :
-     RSIndex[1] < shortband[1] and RSIndex < shortband[1] ?
-     math.min(shortband[1], newshortband) :
-     newshortband
+longband :=
+     RSIndex[1] > longband[1] and
+     RSIndex > longband[1]
+     ? math.max(
+         longband[1],
+         newlongband)
+     : newlongband
+
+shortband :=
+     RSIndex[1] < shortband[1] and
+     RSIndex < shortband[1]
+     ? math.min(
+         shortband[1],
+         newshortband)
+     : newshortband
+
 
 // ============================================================================
 // QQE TREND
 // ============================================================================
+//
+// (uses the counter-based signal below, not ta.cross directly — trend just
+// tracks which band RSIndex is currently trailing)
+// ============================================================================
 
-crossLongBand = ta.cross(longband[1], RSIndex)
-crossShortBand = ta.cross(RSIndex, shortband[1])
+trend :=
+     ta.cross(RSIndex, shortband[1])
+     ? 1
+     : ta.cross(longband[1], RSIndex)
+     ? -1
+     : nz(
+         trend[1],
+         1)
 
-trend := crossShortBand ?
-     1 :
-     crossLongBand ?
-     -1 :
-     nz(trend[1], 1)
+FastAtrRsiTL =
+     trend == 1
+     ? longband
+     : shortband
 
-FastAtrRsiTL = trend == 1 ? longband : shortband
 
 // ============================================================================
-// QQE CROSS COUNTERS
+// FIND ALL QQE CROSSES
 // ============================================================================
 
 var int QQExlong = 0
 var int QQExshort = 0
 
-QQExlong := FastAtrRsiTL < RSIndex ? QQExlong + 1 : 0
-QQExshort := FastAtrRsiTL > RSIndex ? QQExshort + 1 : 0
+QQExlong :=
+     FastAtrRsiTL < RSIndex
+     ? QQExlong + 1
+     : 0
+
+QQExshort :=
+     FastAtrRsiTL > RSIndex
+     ? QQExshort + 1
+     : 0
+
 
 // ============================================================================
-// RAW QQE SIGNALS
+// ORIGINAL QQE CONDITIONS
 // ============================================================================
 
-qqeLongRaw = QQExlong == 1 ? FastAtrRsiTL[1] - 50 : na
-qqeShortRaw = QQExshort == 1 ? FastAtrRsiTL[1] - 50 : na
+qqeLongRaw =
+     QQExlong == 1
+     ? FastAtrRsiTL[1] - 50
+     : na
 
-rawLong = not na(qqeLongRaw)
-rawShort = not na(qqeShortRaw)
+qqeShortRaw =
+     QQExshort == 1
+     ? FastAtrRsiTL[1] - 50
+     : na
 
-// ============================================================================
-// PRICE LOCATION AT SIGNAL — drives TP band selection (request #3)
-// ============================================================================
-
-priceBelowMRC = close < lowerOuter
-priceAboveMRC = close > upperOuter
-priceOutsideMRC = priceBelowMRC or priceAboveMRC
 
 // ============================================================================
 // PRICE-IN-GAP FILTER
 // ============================================================================
 
-gapCheckUpper = gapFilterBand == "Inner" ? upperInner : upperOuter
-gapCheckLower = gapFilterBand == "Inner" ? lowerInner : lowerOuter
+gapCheckUpper =
+     gapFilterBand == "Inner"
+     ? upperInner
+     : upperOuter
 
-priceInGapShort = high >= gapCheckUpper
-priceInGapLong = low <= gapCheckLower
+gapCheckLower =
+     gapFilterBand == "Inner"
+     ? lowerInner
+     : lowerOuter
+
+priceInGapShort =
+     high >= gapCheckUpper
+
+priceInGapLong =
+     low <= gapCheckLower
+
 
 // ============================================================================
-// FILTERS
+// QQE FILTERS
 // ============================================================================
 
-maLongOk = not enableMASideFilter or maBelowOuter
-maShortOk = not enableMASideFilter or maAboveOuter
-gapLongOk = not enablePriceGapFilter or priceInGapLong
-gapShortOk = not enablePriceGapFilter or priceInGapShort
+maLongOk =
+     not enableMASideFilter or
+     maBelowOuter
 
-filteredLong = rawLong and maLongOk and gapLongOk
-filteredShort = rawShort and maShortOk and gapShortOk
+maShortOk =
+     not enableMASideFilter or
+     maAboveOuter
+
+gapLongOk =
+     not enablePriceGapFilter or
+     priceInGapLong
+
+gapShortOk =
+     not enablePriceGapFilter or
+     priceInGapShort
+
 
 // ============================================================================
-// ENTRIES
+// TOUCH MEMORY (armed state)
 // ============================================================================
 //
-// Blocked ONLY in the pre-close buffer window (see MARKET SESSION above) —
-// NOT gated on being inside the session generally. This is the fix for
-// "takes no trades": the old `and inSession` requirement here restricted
-// every entry to a ~5.5-hour daytime window.
+// 2026-08-20 FIX (see header): a touch only counts if it happened while the
+// bias already held (maLongOk/maShortOk true that bar) — matching "if
+// above, short / if below, long" — and then STAYS armed across however
+// many bars it takes for the QQE signal to actually print, instead of
+// requiring both to land on the same bar. Clears the moment the bias
+// itself breaks (SMMA back inside the channel, or flipped to the other
+// side), or the moment a matching signal consumes it.
 // ============================================================================
 
-entryLong = filteredLong and not blockedNow
-entryShort = filteredShort and not blockedNow
+var bool longArmed = false
+var bool shortArmed = false
+
+if maLongOk and gapLongOk
+    longArmed := true
+if maShortOk and gapShortOk
+    shortArmed := true
+
+if enableMASideFilter and not maLongOk
+    longArmed := false
+if enableMASideFilter and not maShortOk
+    shortArmed := false
+
 
 // ============================================================================
-// TRADE TRACKING
+// FINAL QQE SIGNALS
+// ============================================================================
+//
+// The important change:
+//
+// There is NO NY-session restriction.
+//
+// The only entry restriction is the TPT cutoff window.
 // ============================================================================
 
-tick = tickOverride > 0 ? tickOverride : syminfo.mintick
+qqeLong =
+     maLongOk and
+     longArmed and
+     allowNewTrade
+     ? qqeLongRaw
+     : na
 
-// (tradeDirection / tradeEntry / tradeTP / tradeSL / tradeJustStarted are
-// declared earlier, up in TRADE STATE, so DECLUTTER STATE can read them)
+qqeShort =
+     maShortOk and
+     shortArmed and
+     allowNewTrade
+     ? qqeShortRaw
+     : na
 
-// Session change -> force flatten ("stop out on market session change")
-if sessionEnded
-    tradeDirection := 0
-    tradeEntry := na
-    tradeTP := na
-    tradeSL := na
-    tradeJustStarted := false
+// Consume the touch once it fires an entry.
+if not na(qqeLong)
+    longArmed := false
+if not na(qqeShort)
+    shortArmed := false
 
-// New long
-if entryLong
-    tradeDirection := 1
-    tradeEntry := close
-    tradeJustStarted := true
-    tradeSL := close - hardStopTicks * tick
-    tradeTP := priceOutsideMRC ? upperOuter : upperInner   // 2nd (outer) band if price was outside MRC, 1st (inner/closer) if inside
-
-// New short
-if entryShort
-    tradeDirection := -1
-    tradeEntry := close
-    tradeJustStarted := true
-    tradeSL := close + hardStopTicks * tick
-    tradeTP := priceOutsideMRC ? lowerOuter : lowerInner
-
-// TP keeps tracking whichever band type (inner/outer) was chosen at entry,
-// live, as that band itself moves — re-derived every bar from whether the
-// ENTRY price was outside/inside the MRC (frozen classification, moving band).
-if tradeDirection == 1
-    tradeTP := (tradeEntry < lowerOuter or tradeEntry > upperOuter) ? upperOuter : upperInner
-
-if tradeDirection == -1
-    tradeTP := (tradeEntry < lowerOuter or tradeEntry > upperOuter) ? lowerOuter : lowerInner
-
-// Don't check TP/SL on the same candle as the signal, so the line is
-// guaranteed to actually be visible for at least one bar after it prints.
-if tradeJustStarted
-    tradeJustStarted := false
-else
-    if tradeDirection == 1
-        if high >= tradeTP
-            tradeDirection := 0
-            tradeEntry := na
-            tradeTP := na
-            tradeSL := na
-        else if low <= tradeSL
-            tradeDirection := 0
-            tradeEntry := na
-            tradeTP := na
-            tradeSL := na
-
-    if tradeDirection == -1
-        if low <= tradeTP
-            tradeDirection := 0
-            tradeEntry := na
-            tradeTP := na
-            tradeSL := na
-        else if high >= tradeSL
-            tradeDirection := 0
-            tradeEntry := na
-            tradeTP := na
-            tradeSL := na
 
 // ============================================================================
-// SIGNAL LABELS
+// TP + STOP TRACKING
+// ============================================================================
+//
+// LONG:
+//   TP = R1 / Upper Inner
+//   SL = slTicks below entry
+//
+// SHORT:
+//   TP = S1 / Lower Inner
+//   SL = slTicks above entry
+//
 // ============================================================================
 
-plotshape(filteredLong, title = "QQE Long", text = "Long", textcolor = qqeTextColor,
-     style = shape.labelup, location = location.belowbar,
-     color = color.new(qqeLongColor, qqeSignalOpacity), size = size.tiny)
+tick =
+     tickOverride > 0
+     ? tickOverride
+     : syminfo.mintick
 
-plotshape(filteredShort, title = "QQE Short", text = "Short", textcolor = qqeTextColor,
-     style = shape.labeldown, location = location.abovebar,
-     color = color.new(qqeShortColor, qqeSignalOpacity), size = size.tiny)
+var int qqeDir = 0
+var float slLevel = na
+var float entryPriceTracked = na
+
 
 // ============================================================================
-// TP / SL LINES
+// FORCE FLAT / CLEAR AT TPT DEADLINE
 // ============================================================================
 
-plot(showTP and tradeDirection != 0 ? tradeTP : na, title = "TP Target",
-     color = color.new(colTP, tpOpacity), linewidth = 3, style = plot.style_linebr)
+if tptCutoffReached
+    qqeDir := 0
+    slLevel := na
+    entryPriceTracked := na
 
-plot(showSL and tradeDirection != 0 ? tradeSL : na, title = "Hard Stop",
-     color = color.new(colSL, slOpacity), linewidth = 3, style = plot.style_linebr)
+
+// ============================================================================
+// LONG ENTRY
+// ============================================================================
+
+if not na(qqeLong) and not tptCutoffReached
+    qqeDir := 1
+    entryPriceTracked := close
+
+    // EXACTLY slTicks BELOW ENTRY
+    slLevel :=
+         entryPriceTracked -
+         slTicks * tick
+
+
+// ============================================================================
+// SHORT ENTRY
+// ============================================================================
+
+if not na(qqeShort) and not tptCutoffReached
+    qqeDir := -1
+    entryPriceTracked := close
+
+    // EXACTLY slTicks ABOVE ENTRY
+    slLevel :=
+         entryPriceTracked +
+         slTicks * tick
+
+
+// ============================================================================
+// LONG TP / SL
+// ============================================================================
+
+if qqeDir == 1
+
+    // TP = R1 / Upper Inner
+    if high >= upperInner
+        qqeDir := 0
+        slLevel := na
+        entryPriceTracked := na
+
+    // SL
+    else if low <= slLevel
+        qqeDir := 0
+        slLevel := na
+        entryPriceTracked := na
+
+
+// ============================================================================
+// SHORT TP / SL
+// ============================================================================
+
+if qqeDir == -1
+
+    // TP = S1 / Lower Inner
+    if low <= lowerInner
+        qqeDir := 0
+        slLevel := na
+        entryPriceTracked := na
+
+    // SL
+    else if high >= slLevel
+        qqeDir := 0
+        slLevel := na
+        entryPriceTracked := na
+
+
+// ============================================================================
+// TP LEVEL
+// ============================================================================
+//
+// LONG  -> R1
+// SHORT -> S1
+//
+// Dynamically follows the inner band.
+// ============================================================================
+
+tpLevel =
+     qqeDir == 1
+     ? upperInner
+     : qqeDir == -1
+     ? lowerInner
+     : na
+
+
+// ============================================================================
+// SL LEVEL
+// ============================================================================
+
+slPlot =
+     qqeDir != 0
+     ? slLevel
+     : na
+
+
+// ============================================================================
+// QQE SIGNAL PLOTS
+// ============================================================================
+
+plotshape(
+     not na(qqeLong),
+     title = "QQE Long",
+     text = "Long",
+     textcolor = color.white,
+     style = shape.labelup,
+     location = location.belowbar,
+     color = colLong,
+     size = size.tiny)
+
+plotshape(
+     not na(qqeShort),
+     title = "QQE Short",
+     text = "Short",
+     textcolor = color.white,
+     style = shape.labeldown,
+     location = location.abovebar,
+     color = colShort,
+     size = size.tiny)
+
+
+// ============================================================================
+// TP TARGET
+// ============================================================================
+
+plot(
+     showTP
+         ? tpLevel
+         : na,
+     title = "TP Target - Inner Band",
+     style = plot.style_circles,
+     color = color.new(colTP, 0),
+     linewidth = 3)
+
+
+// ============================================================================
+// STOP LEVEL
+// ============================================================================
+
+plot(
+     showSL
+         ? slPlot
+         : na,
+     title = "Stop Level",
+     style = plot.style_circles,
+     color = color.new(colSL, 0),
+     linewidth = 3)
+
 
 // ============================================================================
 // ALERTS
 // ============================================================================
 
-alertcondition(entryLong, title = "QQE Long", message = "QQE Long")
-alertcondition(entryShort, title = "QQE Short", message = "QQE Short")
+alertcondition(
+     not na(qqeLong),
+     title = "QQE Long",
+     message = "QQE Long")
+
+alertcondition(
+     not na(qqeShort),
+     title = "QQE Short",
+     message = "QQE Short")
