@@ -2,7 +2,24 @@
 
 Strategies/indicators implementing the model from `../knowledge/automation-architecture.md`.
 
-## `auto-reversion-strategy.pine` — current focus
+## `mrc-gap-qqe-strategy.pine` — literal 6-rule version, added 2026-08-20
+
+A fresh, minimal strategy built to read as closely as possible to the trader's plain-language
+6-rule statement of this setup: (1) wait for the 200 MA to gap fully above/below the MRC's outer
+band, (2) gap above = short bias, gap below = long bias, (3) wait for price to wick into/touch the
+band on the bias side, (4) then wait for a matching-direction QQE signal, entering on that
+candle's confirmed close, (5) fixed 35-tick stop, take profit on the first touch of the opposite
+band. Same exact MRC (fareidzulkifli SuperSmoother) and QQE (colinmck counter-based) ports as
+`auto-reversion-strategy.pine` below, but deliberately skips all the bugfix machinery that file
+accumulated (bias consecutive-bar confirm, touch lookback/expiry, mean-crossback invalidation,
+cooldown, volume filter) — this is the rules as stated, nothing more. See
+`../knowledge/strategies/mean-reversion.md` for how the two files relate.
+
+**How to use it:** TradingView → open an MNQ1!/NQ1!/MGC1! chart → Pine Editor → paste this file's
+contents → Add to Chart → Strategy Tester tab. Hand-written, not yet run through TradingView's
+compiler — send me the exact error text if it throws one on first load.
+
+## `auto-reversion-strategy.pine` — hardened/iterated version
 
 Current focus (2026-08-19) — the mean-reversion half of the two-strategy plan (see
 `../knowledge/strategies/mean-reversion.md`). 200 MA bias filter + an approximated MRC-style

@@ -1,0 +1,225 @@
+//@version=6
+// ============================================================================
+// MRC Gap + QQE Strategy
+//
+// Fresh, literal implementation of the exact 6-rule ruleset as stated
+// 2026-08-20, no accumulated fixes/toggles carried over from
+// auto-reversion-strategy.pine (that file is the hardened, iterated
+// version of a close cousin of this idea — see
+// ../knowledge/strategies/mean-reversion.md for its history). This script
+// is deliberately minimal and reads as close to the plain-language rules
+// as Pine allows:
+//
+//   1. Wait for price to GAP — the 200 MA moves fully above or below the
+//      MRC (outer) band.
+//   2. Gap above the band -> SHORT bias. Gap below -> LONG bias.
+//   3. Wait for price to TOUCH the band on the bias side — the upper band
+//      for a short bias, the lower band for a long bias.
+//   4. Once price wicks into/touches that band, wait for the next QQE
+//      signal in the bias direction (short bias -> QQE short only, long
+//      bias -> QQE long only). No opposite-direction signal is ever
+//      taken. If no signal ever comes, no trade. Enter on the CLOSE of
+//      the signal candle.
+//   5. Stop loss: fixed 35 ticks from entry. Take profit: the first touch
+//      of the OPPOSITE MRC band (a live/moving order, fires on a wick
+//      touch — not waiting for a confirmed close).
+//   6. Make money.
+//
+// MRC is fareidzulkifli's "Mean Reversion Channel" (SuperSmoother variant,
+// exact port): mean = SuperSmoother(hlc3, 200), band width =
+// SuperSmoother(True Range, 200) * pi * multiplier. Bias/touch/target all
+// reference the OUTER band (R2/S2) by default — toggle to the inner band
+// (R1/S1) via `bandMode` if that's what "the band" is meant to be instead.
+// QQE is colinmck's "QQE signals" (exact port): a counter-based signal,
+// not ta.crossover — fires on the bar the counter first hits 1.
+//
+// Deliberately NOT included (unlike auto-reversion-strategy.pine): bias
+// consecutive-bar confirmation, touch expiry/lookback windows, mean-
+// crossback touch invalidation, cooldown after exit, volume confirmation.
+// Those were all bugfixes/refinements earned through live testing of a
+// related setup, not part of the 6 rules as stated — add any of them back
+// on request once this literal version has been watched on a chart.
+//
+// Hand-written, not run through TradingView's compiler on my end — if it
+// throws an error on first load, send the exact error text.
+// ============================================================================
+strategy("MRC Gap + QQE Strategy", overlay = true, pyramiding = 0,
+     default_qty_type = strategy.percent_of_equity, default_qty_value = 10,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.5,
+     slippage = 1, calc_on_every_tick = false,
+     max_lines_count = 500, max_labels_count = 500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+grpMRC = "MRC (exact port)"
+mrcSource = input.source(hlc3, "Price source", group = grpMRC)
+mrcLength = input.int(200, "Lookback period", minval = 1, group = grpMRC)
+innerMult = input.float(1.0, "Inner channel size multiplier", minval = 0.1, group = grpMRC)
+outerMult = input.float(1.5, "Outer channel size multiplier", minval = 0.1, group = grpMRC)
+bandMode  = input.string("Outer", "Band used for gap / touch / target", options = ["Outer", "Inner"], group = grpMRC)
+
+grpBias = "Bias (200 MA)"
+maLen  = input.int(200, "Bias MA length", minval = 1, group = grpBias)
+maType = input.string("SMMA", "Bias MA type", options = ["SMMA", "SMA"], group = grpBias)
+
+grpQQE = "QQE Entry Signal"
+rsiLen    = input.int(14, "RSI length", minval = 2, group = grpQQE)
+rsiSmooth = input.int(5, "RSI smoothing (EMA)", minval = 1, group = grpQQE)
+qqeFactor = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group = grpQQE)
+
+grpRisk = "Risk / Exit"
+stopTicks = input.float(35, "Stop loss (ticks)", minval = 1, group = grpRisk)
+
+grpVisual = "Visuals"
+showEntries = input.bool(true, "Show entry arrows", group = grpVisual)
+showSetup   = input.bool(true, "Show armed (waiting-for-signal) markers", group = grpVisual)
+
+tick = syminfo.mintick
+
+// ---------------------------------------------------------------------------
+// MRC — exact port of fareidzulkifli's SuperSmoother variant
+// ---------------------------------------------------------------------------
+f_supersmoother(src, len) =>
+    a1 = math.exp(-math.sqrt(2) * math.pi / len)
+    b1 = 2 * a1 * math.cos(math.sqrt(2) * math.pi / len)
+    c3 = -math.pow(a1, 2)
+    c2 = b1
+    c1 = 1 - c2 - c3
+    var float ss = na
+    ss := c1 * src + c2 * nz(ss[1], src[1]) + c3 * nz(ss[2], src[2])
+    ss
+
+meanline  = f_supersmoother(mrcSource, mrcLength)
+meanrange = f_supersmoother(ta.tr, mrcLength)
+
+multInner = math.pi * innerMult
+multOuter = math.pi * outerMult
+
+upperInner = meanline + meanrange * multInner   // R1
+lowerInner = meanline - meanrange * multInner   // S1
+upperOuter = meanline + meanrange * multOuter   // R2
+lowerOuter = meanline - meanrange * multOuter   // S2
+
+upperBand = bandMode == "Outer" ? upperOuter : upperInner
+lowerBand = bandMode == "Outer" ? lowerOuter : lowerInner
+
+pMean  = plot(meanline, "MRC Mean", color = color.new(#FFCD00, 0), linewidth = 2)
+pInnU  = plot(upperInner, "MRC R1 (inner)", color = color.new(color.green, 50))
+pInnL  = plot(lowerInner, "MRC S1 (inner)", color = color.new(color.green, 50))
+pOutU  = plot(upperOuter, "MRC R2 (outer)", color = color.new(color.red, 50))
+pOutL  = plot(lowerOuter, "MRC S2 (outer)", color = color.new(color.red, 50))
+fill(pInnU, pOutU, color = color.new(color.red, 88))
+fill(pInnL, pOutL, color = color.new(color.green, 88))
+
+// ---------------------------------------------------------------------------
+// Bias / gap — rule 1 & 2. The 200 MA fully above or below the chosen band
+// (a single-bar check, matching the rule exactly as stated — no consecutive-
+// bar confirmation).
+// ---------------------------------------------------------------------------
+maVal = maType == "SMMA" ? ta.rma(close, maLen) : ta.sma(close, maLen)
+plot(maVal, "Bias MA", color = color.new(color.white, 0), linewidth = 2)
+
+gapShort = maVal > upperBand   // MA fully above the band -> short bias (rule 2)
+gapLong  = maVal < lowerBand   // MA fully below the band -> long bias (rule 2)
+
+// ---------------------------------------------------------------------------
+// QQE — exact port of colinmck's "QQE signals" (counter-based, not
+// ta.crossover).
+// ---------------------------------------------------------------------------
+rsiVal   = ta.rsi(close, rsiLen)
+rsiMa    = ta.ema(rsiVal, rsiSmooth)
+atrRsi   = math.abs(rsiMa[1] - rsiMa)
+wilders  = rsiLen * 2 - 1
+maAtrRsi = ta.ema(atrRsi, wilders)
+deltaFastAtrRsi = ta.ema(maAtrRsi, wilders) * qqeFactor
+
+var float longBand  = 0.0
+var float shortBand = 0.0
+var int   qqeTrend   = 1
+
+newLongBand  = rsiMa - deltaFastAtrRsi
+newShortBand = rsiMa + deltaFastAtrRsi
+
+longBand  := (rsiMa[1] > longBand[1] and rsiMa > longBand[1]) ? math.max(longBand[1], newLongBand) : newLongBand
+shortBand := (rsiMa[1] < shortBand[1] and rsiMa < shortBand[1]) ? math.min(shortBand[1], newShortBand) : newShortBand
+
+qqeTrend := ta.cross(rsiMa, shortBand[1]) ? 1 : ta.cross(longBand[1], rsiMa) ? -1 : nz(qqeTrend[1], 1)
+fastAtrRsiTL = qqeTrend == 1 ? longBand : shortBand
+
+var int qqeXLongCount  = 0
+var int qqeXShortCount = 0
+qqeXLongCount  := fastAtrRsiTL < rsiMa ? qqeXLongCount + 1 : 0
+qqeXShortCount := fastAtrRsiTL > rsiMa ? qqeXShortCount + 1 : 0
+qqeCrossUp   = qqeXLongCount == 1
+qqeCrossDown = qqeXShortCount == 1
+
+// rule 4: entries only on a confirmed candle close
+qqeLongSignal  = qqeCrossUp   and barstate.isconfirmed
+qqeShortSignal = qqeCrossDown and barstate.isconfirmed
+
+// ---------------------------------------------------------------------------
+// State machine — rules 1, 3, 4. Stateless-flat while in a trade (a fresh
+// gap must form after a position closes before a new setup can arm), and
+// re-armed on every new opposite-direction gap while flat.
+// ---------------------------------------------------------------------------
+var int  bias    = 0     // 1 = long bias, -1 = short bias, 0 = none armed
+var bool touched = false // rule 3/4: price has wicked into/touched the band
+
+if barstate.isconfirmed
+    if strategy.position_size == 0
+        if gapShort
+            bias    := -1
+            touched := false
+        else if gapLong
+            bias    := 1
+            touched := false
+
+        if bias == -1 and high >= upperBand
+            touched := true
+        if bias == 1 and low <= lowerBand
+            touched := true
+    else
+        bias    := 0
+        touched := false
+
+longSetup  = bias == 1  and touched and qqeLongSignal
+shortSetup = bias == -1 and touched and qqeShortSignal
+
+longCondition  = barstate.isconfirmed and longSetup  and strategy.position_size == 0
+shortCondition = barstate.isconfirmed and shortSetup and strategy.position_size == 0
+
+if longCondition
+    strategy.entry("Long", strategy.long)
+if shortCondition
+    strategy.entry("Short", strategy.short)
+
+// "Armed" visual — bias set and band already touched, just waiting on the
+// matching QQE signal. Purely derived from the state above, display only.
+longArmedNow  = bias == 1  and touched and strategy.position_size == 0
+shortArmedNow = bias == -1 and touched and strategy.position_size == 0
+plotshape(showSetup and longArmedNow  and not longCondition,  style = shape.circle, location = location.belowbar, color = color.new(color.green, 60), size = size.tiny, title = "Armed (long)")
+plotshape(showSetup and shortArmedNow and not shortCondition, style = shape.circle, location = location.abovebar, color = color.new(color.red, 60),   size = size.tiny, title = "Armed (short)")
+
+plotshape(showEntries and longCondition,  style = shape.triangleup,   location = location.belowbar, color = color.green, size = size.small, title = "Long Entry")
+plotshape(showEntries and shortCondition, style = shape.triangledown, location = location.abovebar, color = color.red,   size = size.small, title = "Short Entry")
+
+alertcondition(longCondition, "MRC Gap + QQE Long", "{{ticker}} long entry @ {{close}}")
+alertcondition(shortCondition, "MRC Gap + QQE Short", "{{ticker}} short entry @ {{close}}")
+
+// ---------------------------------------------------------------------------
+// Exits — rule 5. Stop is a fixed 35 ticks from entry. Take profit is a
+// live order at the opposite band, filling on the first wick that touches
+// it (not waiting for a confirmed close) — literally "the first opposite
+// MRC band touch."
+// ---------------------------------------------------------------------------
+slPrice = strategy.position_size > 0 ? strategy.position_avg_price - stopTicks * tick :
+          strategy.position_size < 0 ? strategy.position_avg_price + stopTicks * tick : na
+
+tpPrice = strategy.position_size > 0 ? upperBand :
+          strategy.position_size < 0 ? lowerBand : na
+
+if strategy.position_size > 0
+    strategy.exit("Long Exit", "Long", stop = slPrice, limit = tpPrice)
+if strategy.position_size < 0
+    strategy.exit("Short Exit", "Short", stop = slPrice, limit = tpPrice)
