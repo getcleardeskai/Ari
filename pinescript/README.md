@@ -2,6 +2,27 @@
 
 Strategies/indicators implementing the model from `../knowledge/automation-architecture.md`.
 
+## `mrc-200sma-qqe-indicator.pine` — MRC + 200 SMMA + QQE, signals gated by zone
+
+Added 2026-08-20 — trader's own hand-written version (converted to v6, MRC sizing back to the
+public script's original 2.415 outer multiplier rather than the 1.5 used elsewhere in this repo)
+combining the MRC bands, the 200 SMMA, and QQE signals into one indicator: the SMMA plots white
+while inside the outer MRC band and light blue while outside it, and QQE signals only print while
+the SMMA is light blue.
+
+**2026-08-20 bugfix:** the first version gated both QQE Long and QQE Short on the same direction-
+agnostic "SMMA is outside the outer band, either side" condition — so a Long could print while the
+SMMA was pinned in short-only territory (above the upper band) and vice versa. Trader caught it
+live: a "Long" label printing well up in a clear short zone. Fixed by splitting that into
+`maBelowOuter` (the actual long-valid zone) and `maAboveOuter` (the actual short-valid zone) so
+each signal only fires in the zone that matches its own direction.
+
+Pure visual indicator, no `strategy.*` — plots signals and alerts only, doesn't trade.
+
+**How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →
+Add to Chart. Hand-written, not yet run through TradingView's compiler — send me the exact error
+text if it throws one on first load.
+
 ## `mrc-and-200ma-indicator.pine` — visual-only, MRC + 200 MA in one script
 
 Added 2026-08-20. A plain **indicator** (no entries, no strategy logic) that combines

@@ -1,0 +1,482 @@
+//@version=6
+
+// ============================================================================
+// MRC (In/Out Bands) + 200 SMMA + QQE
+//
+// MRC:
+//   - R1 / S1 = Inner channel
+//   - R2 / S2 = Outer channel
+//
+// 200 SMMA:
+//   - Completely independent of MRC
+//   - Uses ta.rma(close, 200)
+//   - WHITE = SMMA inside MRC
+//   - LIGHT BLUE = SMMA outside outer MRC
+//
+// QQE:
+//   - Only prints signals while the SMMA is LIGHT BLUE, AND only the
+//     signal that matches which SIDE it's outside on:
+//       SMMA below the lower outer band (S2) -> long zone -> QQE Long only
+//       SMMA above the upper outer band (R2) -> short zone -> QQE Short only
+//   - 2026-08-20 FIX: the first version gated both qqeLong and qqeShort on
+//     the same direction-agnostic `maOutsideMRC` (true if the SMMA cleared
+//     EITHER band, regardless of which side) — so a QQE Long could still
+//     print while the SMMA was pinned above the upper band, i.e. inside
+//     short-only territory, and vice versa. Caught live: a "Long" label
+//     printing well up in a short zone. Split into `maBelowOuter` (valid
+//     long zone) and `maAboveOuter` (valid short zone) so each signal only
+//     prints in the zone that actually matches it.
+//   - Original QQE logic converted to Pine v6
+//
+// MRC sizing matches the original fareidzulkifli MRC:
+//   Inner multiplier = 1.0
+//   Outer multiplier = 2.415
+// ============================================================================
+
+indicator("MRC (In/Out Bands) + 200 SMMA + QQE", overlay = true, max_lines_count = 500)
+
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+grpMRC = "MRC"
+
+mrcSource = input.source(
+     hlc3,
+     "Price source",
+     group = grpMRC)
+
+mrcLength = input.int(
+     200,
+     "Lookback period",
+     minval = 1,
+     group = grpMRC)
+
+innerMult = input.float(
+     1.0,
+     "Inner channel size multiplier",
+     minval = 0.1,
+     group = grpMRC)
+
+outerMult = input.float(
+     2.415,
+     "Outer channel size multiplier",
+     minval = 0.1,
+     group = grpMRC)
+
+showMean = input.bool(
+     false,
+     "Show MRC mean line",
+     group = grpMRC)
+
+showFill = input.bool(
+     true,
+     "Shade between inner and outer bands",
+     group = grpMRC)
+
+
+// ============================================================================
+// 200 SMMA SETTINGS
+// ============================================================================
+
+grpMA = "200 SMMA"
+
+maLen = input.int(
+     200,
+     "SMMA length",
+     minval = 1,
+     group = grpMA)
+
+showMA = input.bool(
+     true,
+     "Show 200 SMMA",
+     group = grpMA)
+
+
+// ============================================================================
+// COLOR SETTINGS
+// ============================================================================
+
+grpColor = "Colors"
+
+colInner = input.color(
+     color.green,
+     "Inner band color",
+     group = grpColor)
+
+colOuter = input.color(
+     color.red,
+     "Outer band color",
+     group = grpColor)
+
+colMean = input.color(
+     #FFCD00,
+     "Mean line color",
+     group = grpColor)
+
+colMA = input.color(
+     color.white,
+     "200 SMMA color",
+     group = grpColor)
+
+colMAOutside = input.color(
+     color.rgb(100, 181, 246),
+     "200 SMMA outside color",
+     group = grpColor)
+
+
+// ============================================================================
+// QQE SETTINGS
+// ============================================================================
+
+grpQQE = "QQE"
+
+RSI_Period = input.int(
+     14,
+     title = "RSI Length",
+     group = grpQQE)
+
+SF = input.int(
+     5,
+     title = "RSI Smoothing",
+     group = grpQQE)
+
+QQE = input.float(
+     4.238,
+     title = "Fast QQE Factor",
+     group = grpQQE)
+
+ThreshHold = input.int(
+     10,
+     title = "Thresh-hold",
+     group = grpQQE)
+
+
+// ============================================================================
+// SUPER SMOOTHER
+// ============================================================================
+//
+// Same SuperSmoother calculation used by the original MRC.
+// ============================================================================
+
+f_supersmoother(src, len) =>
+    a1 = math.exp(
+         -math.sqrt(2) * math.pi / len)
+
+    b1 = 2 * a1 * math.cos(
+         math.sqrt(2) * math.pi / len)
+
+    c3 = -math.pow(a1, 2)
+    c2 = b1
+    c1 = 1 - c2 - c3
+
+    var float ss = na
+
+    ss := c1 * src +
+         c2 * nz(ss[1], src[1]) +
+         c3 * nz(ss[2], src[2])
+
+    ss
+
+
+// ============================================================================
+// MRC CALCULATION
+// ============================================================================
+
+// MRC mean
+meanline = f_supersmoother(
+     mrcSource,
+     mrcLength)
+
+// MRC range
+meanrange = f_supersmoother(
+     ta.tr,
+     mrcLength)
+
+
+// ============================================================================
+// ORIGINAL MRC MULTIPLIERS
+// ============================================================================
+
+multInner = math.pi * innerMult
+multOuter = math.pi * outerMult
+
+
+// ============================================================================
+// MRC BANDS
+// ============================================================================
+
+// Inner channel
+upperInner = meanline + (meanrange * multInner)
+lowerInner = meanline - (meanrange * multInner)
+
+// Outer channel
+upperOuter = meanline + (meanrange * multOuter)
+lowerOuter = meanline - (meanrange * multOuter)
+
+
+// ============================================================================
+// 200 SMMA
+// ============================================================================
+//
+// SMMA = TradingView's RMA implementation.
+// Completely independent from MRC.
+// ============================================================================
+
+maVal = ta.rma(close, maLen)
+
+
+// ============================================================================
+// SMMA / MRC RELATIONSHIP
+// ============================================================================
+//
+// LIGHT BLUE when SMMA is OUTSIDE the outer MRC (either side).
+//
+// WHITE when SMMA is INSIDE the outer MRC.
+//
+// maBelowOuter / maAboveOuter split that "outside" state by SIDE, so the
+// QQE filter below can tell a long-valid zone from a short-valid zone
+// instead of treating both sides of "outside" as the same thing.
+// ============================================================================
+
+maBelowOuter = maVal < lowerOuter   // valid LONG zone
+maAboveOuter = maVal > upperOuter   // valid SHORT zone
+maOutsideMRC = maBelowOuter or maAboveOuter
+
+maPlotColor = maOutsideMRC
+     ? colMAOutside
+     : colMA
+
+
+// ============================================================================
+// MRC PLOTS
+// ============================================================================
+
+pInnU = plot(
+     upperInner,
+     title = "MRC R1 (Inner)",
+     color = color.new(colInner, 30),
+     linewidth = 1)
+
+pInnL = plot(
+     lowerInner,
+     title = "MRC S1 (Inner)",
+     color = color.new(colInner, 30),
+     linewidth = 1)
+
+pOutU = plot(
+     upperOuter,
+     title = "MRC R2 (Outer)",
+     color = color.new(colOuter, 20),
+     linewidth = 1)
+
+pOutL = plot(
+     lowerOuter,
+     title = "MRC S2 (Outer)",
+     color = color.new(colOuter, 20),
+     linewidth = 1)
+
+
+// ============================================================================
+// MRC SHADING
+// ============================================================================
+
+fill(
+     pInnU,
+     pOutU,
+     color = showFill
+         ? color.new(colOuter, 88)
+         : na,
+     title = "Upper MRC Shade")
+
+fill(
+     pInnL,
+     pOutL,
+     color = showFill
+         ? color.new(colInner, 88)
+         : na,
+     title = "Lower MRC Shade")
+
+
+// ============================================================================
+// MRC MEAN
+// ============================================================================
+
+plot(
+     showMean ? meanline : na,
+     title = "MRC Mean",
+     color = color.new(colMean, 0),
+     linewidth = 2)
+
+
+// ============================================================================
+// 200 SMMA
+// ============================================================================
+
+plot(
+     showMA ? maVal : na,
+     title = "200 SMMA",
+     color = color.new(maPlotColor, 0),
+     linewidth = 2)
+
+
+// ============================================================================
+// QQE CALCULATION
+// ============================================================================
+
+src = close
+
+Wilders_Period = RSI_Period * 2 - 1
+
+Rsi = ta.rsi(src, RSI_Period)
+
+RsiMa = ta.ema(Rsi, SF)
+
+AtrRsi = math.abs(RsiMa[1] - RsiMa)
+
+MaAtrRsi = ta.ema(
+     AtrRsi,
+     Wilders_Period)
+
+dar = ta.ema(
+     MaAtrRsi,
+     Wilders_Period) * QQE
+
+
+// ============================================================================
+// QQE BANDS
+// ============================================================================
+
+var float longband = 0.0
+var float shortband = 0.0
+var int trend = 0
+
+DeltaFastAtrRsi = dar
+RSIndex = RsiMa
+
+newshortband = RSIndex + DeltaFastAtrRsi
+newlongband = RSIndex - DeltaFastAtrRsi
+
+longband := RSIndex[1] > longband[1] and RSIndex > longband[1] ?
+     math.max(longband[1], newlongband) :
+     newlongband
+
+shortband := RSIndex[1] < shortband[1] and RSIndex < shortband[1] ?
+     math.min(shortband[1], newshortband) :
+     newshortband
+
+
+// ============================================================================
+// QQE TREND
+// ============================================================================
+
+crossLongBand = ta.cross(longband[1], RSIndex)
+
+crossShortBand = ta.cross(RSIndex, shortband[1])
+
+trend := crossShortBand ?
+     1 :
+     crossLongBand ?
+     -1 :
+     nz(trend[1], 1)
+
+FastAtrRsiTL = trend == 1 ?
+     longband :
+     shortband
+
+
+// ============================================================================
+// FIND ALL QQE CROSSES
+// ============================================================================
+
+var int QQExlong = 0
+var int QQExshort = 0
+
+QQExlong := FastAtrRsiTL < RSIndex ?
+     QQExlong + 1 :
+     0
+
+QQExshort := FastAtrRsiTL > RSIndex ?
+     QQExshort + 1 :
+     0
+
+
+// ============================================================================
+// ORIGINAL QQE CONDITIONS
+// ============================================================================
+
+qqeLongRaw = QQExlong == 1 ?
+     FastAtrRsiTL[1] - 50 :
+     na
+
+qqeShortRaw = QQExshort == 1 ?
+     FastAtrRsiTL[1] - 50 :
+     na
+
+
+// ============================================================================
+// QQE FILTER
+// ============================================================================
+//
+// THIS IS THE IMPORTANT PART:
+//
+// QQE Long only prints while the SMMA is below the lower outer band
+// (maBelowOuter) — the zone we actually look for longs in.
+//
+// QQE Short only prints while the SMMA is above the upper outer band
+// (maAboveOuter) — the zone we actually look for shorts in.
+//
+// 2026-08-20 FIX: previously both were gated on the same direction-
+// agnostic `maOutsideMRC`, so a Long could print while the SMMA was
+// outside on the SHORT side (and vice versa) — any "outside" counted for
+// both signals. Now each signal only fires in the zone that matches it.
+// ============================================================================
+
+qqeLong = maBelowOuter ?
+     qqeLongRaw :
+     na
+
+qqeShort = maAboveOuter ?
+     qqeShortRaw :
+     na
+
+
+// ============================================================================
+// QQE PLOTS
+// ============================================================================
+
+plotshape(
+     not na(qqeLong),
+     title = "QQE Long",
+     text = "Long",
+     textcolor = color.white,
+     style = shape.labelup,
+     location = location.belowbar,
+     color = color.green,
+     size = size.tiny)
+
+plotshape(
+     not na(qqeShort),
+     title = "QQE Short",
+     text = "Short",
+     textcolor = color.white,
+     style = shape.labeldown,
+     location = location.abovebar,
+     color = color.red,
+     size = size.tiny)
+
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(
+     not na(qqeLong),
+     title = "QQE Long",
+     message = "QQE Long")
+
+alertcondition(
+     not na(qqeShort),
+     title = "QQE Short",
+     message = "QQE Short")
