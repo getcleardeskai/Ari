@@ -255,6 +255,24 @@ later signal) that's already covered by bias being re-checked fresh at entry tim
 only costing valid trades, not preventing anything. Left as a tunable input for anyone who wants
 a tighter window later.
 
+**2026-08-20, widening the lookback backfired — real fix is mean-crossback, not a bar count:**
+trader caught it immediately — shorts firing in the middle/bottom of the channel with no touch of
+the upper band anywhere nearby. Cause: widening `touchLookbackBars` to 500 brought back the exact
+"stale touch fires an unrelated later signal" bug from earlier, just via a different path — a
+touch from way up near the top of a swing was still "recent enough" (well under 500 bars) to pair
+with a totally unrelated QQE short cross much later, even though price had already round-tripped
+back down through the mean multiple times in between. Bias staying true the whole time (MA still
+above the band) doesn't prevent this, since bias only checks the MA's position, not whether price
+already reverted.
+
+Real fix: a touch is only valid if price hasn't already crossed back through the mean line since
+it happened — `ta.barssince(ta.crossover(close, meanline))` / `ta.barssince(ta.crossunder(...))`
+compared against the touch's own bars-since. This lets a touch stay valid for however many bars a
+slow QQE confirmation takes (fixing the spike-wick case from the prior entry), while invalidating
+it the moment price actually reverts through the mean, which is what actually failed here.
+`touchLookbackBars` (500) is kept only as an outer safety cap; the mean-crossback check is what
+does the real work now. Still fully stateless — two more `ta.barssince()` calls, no new flag.
+
 ## Reference examples (from chart screenshots, 2026-08-19)
 
 - **Valid long example** (2nd screenshot, Micro Gold Futures, 1m): 200 MA below MRC, candle

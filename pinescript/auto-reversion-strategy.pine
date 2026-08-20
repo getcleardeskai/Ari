@@ -15,10 +15,11 @@
 //              count even when clearly surrounded by bars on the other
 //              side).
 //   2. TOUCH : price has touched the true outer band (the far edge of the
-//              gradient zone) within the last touchLookbackBars bars
-//              (default 500, effectively "however long it takes" — see
-//              2026-08-20 note below) — the touch and the signal don't need
-//              to be the same candle.
+//              gradient zone) and hasn't crossed back through the mean line
+//              since — the touch and the signal don't need to be the same
+//              candle, however many bars it takes, as long as it's still
+//              the same excursion out to the band (see 2026-08-20 note
+//              below).
 //   3. SIGNAL: once touched, wait (however long it takes) for a QQE
 //              long/short signal. It does not need to print while price is
 //              still inside/touching the band — only that a touch happened
@@ -306,24 +307,34 @@ cooldownOk = barsSinceFlat >= cooldownBars
 // bars (0 = same bar only). No state to track/consume — recomputed fresh
 // every bar with ta.barssince.
 //
-// 2026-08-20, later: default widened from 3 to 500 bars (effectively
-// unbounded). A sharp spike wick can tag the outer band and snap straight
-// back, with the QQE signal not actually confirming the reversal until well
-// after price has already moved back toward the middle of the channel —
-// legitimately more than a few bars later, confirmed by a chart example
-// where the real long signal printed well outside a 3-bar window. The
-// original worry that motivated a short window (a stale touch from way
-// earlier firing an unrelated later signal) is already covered by bias
-// being re-checked fresh at entry time above, so a tight cap here was
-// solving a problem that no longer exists while creating a new one
-// (missed valid trades). Left as a tunable input, not hardcoded, in case a
-// tighter window is wanted later.
+// 2026-08-20, later: widened touchLookbackBars 3 -> 500 to let a slow-to-
+// confirm QQE signal still count after a sharp spike-wick touch. That
+// alone brought BACK the original "stale touch from way earlier fires an
+// unrelated later signal" bug (trader caught it live: shorts firing in the
+// middle/bottom of the channel off an upper-band touch from way up top,
+// with price having round-tripped through the mean multiple times in
+// between). Bias being true the whole time doesn't stop this — bias only
+// checks the MA's position, not whether price already reverted.
+//
+// Real fix: a touch only counts if price hasn't already crossed back
+// through the mean line since it happened — i.e. it's still the SAME
+// excursion out to the band, however many bars that takes. Once price
+// closes back across the mean, that touch is spent; a fresh one is needed.
+// touchLookbackBars is kept as an outer safety cap (still 500, i.e. mostly
+// out of the way) but the mean-crossback check is what actually does the
+// work now. Still fully stateless — ta.barssince on both conditions, no
+// flag to track or reset.
 // ---------------------------------------------------------------------------
 barsSinceTouchLower = ta.barssince(low <= lower2_1)
 barsSinceTouchUpper = ta.barssince(high >= upper2_1)
 
+barsSinceMeanCrossUp   = ta.barssince(ta.crossover(close, meanline))   // invalidates a lower-band touch (long setup spent)
+barsSinceMeanCrossDown = ta.barssince(ta.crossunder(close, meanline))  // invalidates an upper-band touch (short setup spent)
+
 touchedLowerRecent = not na(barsSinceTouchLower) and barsSinceTouchLower <= touchLookbackBars
+     and (na(barsSinceMeanCrossUp) or barsSinceTouchLower <= barsSinceMeanCrossUp)
 touchedUpperRecent = not na(barsSinceTouchUpper) and barsSinceTouchUpper <= touchLookbackBars
+     and (na(barsSinceMeanCrossDown) or barsSinceTouchUpper <= barsSinceMeanCrossDown)
 
 doLongEntry  = false
 doShortEntry = false
