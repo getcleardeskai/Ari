@@ -145,6 +145,15 @@ expires after `touchExpiryBars` (default 20) bars with no signal, instead of eit
 any single-bar bias flicker (too strict, caused missed trades) or never expiring (too loose,
 caused this).
 
+**2026-08-20, later still:** trader pointed at a Long firing while the bias MA was visibly
+running above the entire band (short-bias territory) in the screenshot — confirmed it was the
+same 200-period MA the script actually uses, not a mix-up with a different indicator. Working
+theory (not independently verified against the raw data, but consistent with the code): the bias
+check was a strict single-bar condition, so one noisy bar where the MA briefly dipped through the
+band edge — even surrounded by bars clearly on the other side — satisfied it. Fixed by requiring
+bias to hold for `biasConfirmBars` (default 3) consecutive confirmed bars before it counts,
+instead of just the instant of the signal.
+
 The diagnostic funnel table and rule toggles from the debugging phase were removed from the
 script now that the ruleset is settled — they did their job (found the real bugs) and would just
 be clutter now. Can be added back if useful once shorts/volume are reintroduced.

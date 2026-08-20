@@ -8,7 +8,10 @@
 // Rules, exactly as specified 2026-08-19 (long case; short is the exact mirror):
 //   1. BIAS  : the entire MRC channel sits above the 200 MA (equivalently:
 //              the MA is fully below the outer band). Mirror: entire MRC
-//              below the MA, for shorts.
+//              below the MA, for shorts. Must hold for biasConfirmBars
+//              consecutive confirmed bars (2026-08-20 — a strict single-bar
+//              check let one noisy bar count even when clearly surrounded
+//              by bars on the other side).
 //   2. TOUCH : price has touched the outer band at some point while that
 //              bias holds. Persistent, not same-bar — the touch and the
 //              signal do NOT need to happen on the same candle.
@@ -66,9 +69,10 @@ rsiSmooth = input.int(5, "RSI smoothing (EMA)", minval = 1, group = grpQQE)
 qqeFactor = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group = grpQQE)
 
 grpRisk = "Risk / Exit"
-stopTicks     = input.float(70, "Stop loss (ticks)", minval = 1, group = grpRisk)
-cooldownBars  = input.int(10, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
+stopTicks       = input.float(70, "Stop loss (ticks)", minval = 1, group = grpRisk)
+cooldownBars    = input.int(10, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
 touchExpiryBars = input.int(20, "Touch expires after this many bars with no signal", minval = 1, group = grpRisk)
+biasConfirmBars = input.int(3, "Bias must hold for this many consecutive bars", minval = 1, group = grpRisk)
 
 grpColor = "Colors"
 colBull = input.color(#089981, "Bullish color", group = grpColor)
@@ -186,6 +190,20 @@ plot(maVal, "Bias MA", color = color.new(color.white, 0), linewidth = 2)
 biasLongOk  = maVal < lower2
 biasShortOk = maVal > upper2
 
+// Bias must hold for several consecutive CONFIRMED bars, not just the exact
+// instant a signal fires — 2026-08-20: a strict single-bar check let a
+// brief one-bar noise flicker of the MA through the band edge count as
+// "bias satisfied," even surrounded by bars where it clearly wasn't. This
+// is what "Long" firing while the MA visibly sat above the whole band was.
+var int biasLongStreak  = 0
+var int biasShortStreak = 0
+if barstate.isconfirmed
+    biasLongStreak  := biasLongOk  ? biasLongStreak  + 1 : 0
+    biasShortStreak := biasShortOk ? biasShortStreak + 1 : 0
+
+biasLongConfirmed  = biasLongStreak  >= biasConfirmBars
+biasShortConfirmed = biasShortStreak >= biasConfirmBars
+
 // ---------------------------------------------------------------------------
 // QQE signal — exact port of colinmck's "QQE signals" (counter-based, not
 // ta.crossover).
@@ -275,10 +293,10 @@ if barstate.isconfirmed
 
 doLongEntry  = false
 doShortEntry = false
-if barstate.isconfirmed and biasLongOk and touchedLower and qqeLongSignal and cooldownOk
+if barstate.isconfirmed and biasLongConfirmed and touchedLower and qqeLongSignal and cooldownOk
     doLongEntry := true
     touchedLower := false   // consumed
-if barstate.isconfirmed and biasShortOk and touchedUpper and qqeShortSignal and cooldownOk
+if barstate.isconfirmed and biasShortConfirmed and touchedUpper and qqeShortSignal and cooldownOk
     doShortEntry := true
     touchedUpper := false   // consumed
 
