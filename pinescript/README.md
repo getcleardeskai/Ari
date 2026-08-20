@@ -44,6 +44,23 @@ TP dot — it now tracks S2/R2 continuously, with the near-band buffer/fixed-tic
 re-checked every bar (not just at entry). Not a one-directional ratchet: it moves wherever the
 band (or the buffer fallback) currently sits, in either direction.
 
+**2026-08-20, final round — opacity actually works, fixed-tick stop actually locks, TP always
+bottom, QQE colors exposed:**
+1. **Opacity bugfix:** every plot passed a hardcoded transparency number straight into
+   `color.new()`, silently discarding whatever alpha the color picker itself was set to — changing
+   opacity visibly did nothing. Added an explicit opacity % input per element (inner/outer band,
+   band shade, mean line, SMMA, QQE labels, TP dot, stop level), each actually wired into its plot.
+2. **Fixed-tick stop bugfix:** the tick-stop fallback was `close - slFixedTicks*tick`, recomputed
+   off the live `close` every bar — that's not "fixed," it's a very tight trail that moves with
+   price. Added `slIsFixed`/`slFixedLvl` state: the first bar price comes within `slBufferTicks` of
+   the band, the fixed level is computed ONCE and locked for the rest of the trade, not
+   recalculated afterward even if price drifts back away from the band.
+3. **TP always at the bottom line:** per trader request, `tpLevel` now always tracks the bottom
+   outer band (S2) for either direction, instead of the opposite-of-entry band (which was top for a
+   long). Deliberate change, not a bugfix — flagged since it changes what the dot means for longs.
+4. **QQE colors:** `colQQELong`/`colQQEShort` inputs replace the hardcoded green/red on the
+   Long/Short labels.
+
 Pure visual indicator, no `strategy.*` — plots signals and alerts only, doesn't trade.
 
 **How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →

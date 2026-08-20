@@ -39,22 +39,36 @@
 //   - Original QQE logic converted to Pine v6
 //
 // TP TARGET DOT:
-//   - After a signal prints, a small dot tracks the OPPOSITE outer band
-//     (the level we'd expect price to reach) every bar, moving with the
-//     band, until price actually touches it — then it disappears until
-//     the next signal. Purely visual, no strategy/entries.
+//   - After a signal prints, a small dot tracks a target band every bar,
+//     moving with it, until price actually touches it — then it
+//     disappears until the next signal. Purely visual, no strategy/entries.
+//   - 2026-08-20: per trader request, TP always tracks the BOTTOM outer
+//     band (S2), for either direction — previously it was the opposite
+//     band (top for a long, bottom for a short); this was a deliberate
+//     change, not a bugfix.
 //
-// STOP LEVEL (2026-08-20, added; 2026-08-20 later — made it follow the band):
-//   - On the SAME side as entry — R2 for a short, S2 for a long — and
-//     FOLLOWS that band live every bar, same as the TP dot follows the
-//     opposite band (originally froze at the signal-bar value; changed
-//     per trader request to keep tracking afterward instead).
-//   - EXCEPTION: on any bar where price is within `slBufferTicks` (default
-//     25) of that band, S2/R2 is too tight to be a useful stop, so a fixed
-//     `slFixedTicks` (default 100) from the current close is used on that
-//     bar instead — also re-evaluated every bar, not just at entry.
+// STOP LEVEL:
+//   - On the SAME side as entry — R2 for a short, S2 for a long. Follows
+//     that band live every bar UNTIL price comes within `slBufferTicks`
+//     (default 25) of it — at that point it LOCKS: a fixed `slFixedTicks`
+//     (default 100) level is computed once and held for the rest of the
+//     trade, even if price later drifts back away from the band. 2026-08-20
+//     FIX: the fixed-tick fallback was being recomputed off the live
+//     `close` every bar, so it was never actually "fixed" — it drifted
+//     with price like a very tight trail. Now it locks in once and stays
+//     put, per trader request ("i want the stoploss to be fixed if its a
+//     tick stoploss").
 //   - Clears the same way the TP dot does: on a target hit, a stop hit, or
 //     a fresh signal in either direction taking over the tracking.
+//
+// OPACITY (2026-08-20 FIX): every plot used to pass a hardcoded
+// transparency number straight into color.new(), discarding whatever alpha
+// the color picker was set to — changing "opacity" visibly did nothing.
+// Every element now has its own explicit opacity %  input, actually wired
+// into its plot.
+//
+// QQE Long/Short label colors are now inputs (`colQQELong`/`colQQEShort`)
+// instead of hardcoded green/red.
 //
 // MRC sizing matches the original fareidzulkifli MRC:
 //   Inner multiplier = 1.0
@@ -128,9 +142,25 @@ showMA = input.bool(
 
 grpColor = "Colors"
 
+// Opacity here is a plain 0-100 "% opaque" scale (100 = fully solid), the
+// opposite of Pine's own `transparency` argument to color.new() (0 = fully
+// solid) — converted with `100 - opacityPct` everywhere it's used below.
+// 2026-08-20 FIX: every plot used to pass a hardcoded transparency number
+// straight into color.new(), which silently discarded whatever alpha the
+// color picker itself was set to — changing "opacity" in the picker did
+// nothing. Now each element has its own explicit opacity input that's
+// actually wired into its plot.
+
 colInner = input.color(
      color.green,
      "Inner band color",
+     group = grpColor)
+
+innerOpacity = input.int(
+     70,
+     "Inner band opacity %",
+     minval = 0,
+     maxval = 100,
      group = grpColor)
 
 colOuter = input.color(
@@ -138,9 +168,30 @@ colOuter = input.color(
      "Outer band color",
      group = grpColor)
 
+outerOpacity = input.int(
+     80,
+     "Outer band opacity %",
+     minval = 0,
+     maxval = 100,
+     group = grpColor)
+
+fillOpacity = input.int(
+     12,
+     "Band shade opacity %",
+     minval = 0,
+     maxval = 100,
+     group = grpColor)
+
 colMean = input.color(
      #FFCD00,
      "Mean line color",
+     group = grpColor)
+
+meanOpacity = input.int(
+     100,
+     "Mean line opacity %",
+     minval = 0,
+     maxval = 100,
      group = grpColor)
 
 colMA = input.color(
@@ -153,14 +204,52 @@ colMAOutside = input.color(
      "200 SMMA outside color",
      group = grpColor)
 
+maOpacity = input.int(
+     100,
+     "200 SMMA opacity %",
+     minval = 0,
+     maxval = 100,
+     group = grpColor)
+
+colQQELong = input.color(
+     color.green,
+     "QQE Long color",
+     group = grpColor)
+
+colQQEShort = input.color(
+     color.red,
+     "QQE Short color",
+     group = grpColor)
+
+qqeOpacity = input.int(
+     100,
+     "QQE label opacity %",
+     minval = 0,
+     maxval = 100,
+     group = grpColor)
+
 colTP = input.color(
      color.orange,
      "TP target dot color",
      group = grpColor)
 
+tpOpacity = input.int(
+     100,
+     "TP target dot opacity %",
+     minval = 0,
+     maxval = 100,
+     group = grpColor)
+
 colSL = input.color(
      color.fuchsia,
      "Stop level color",
+     group = grpColor)
+
+slOpacity = input.int(
+     100,
+     "Stop level opacity %",
+     minval = 0,
+     maxval = 100,
      group = grpColor)
 
 
@@ -353,25 +442,25 @@ maPlotColor = maOutsideMRC
 pInnU = plot(
      upperInner,
      title = "MRC R1 (Inner)",
-     color = color.new(colInner, 30),
+     color = color.new(colInner, 100 - innerOpacity),
      linewidth = 1)
 
 pInnL = plot(
      lowerInner,
      title = "MRC S1 (Inner)",
-     color = color.new(colInner, 30),
+     color = color.new(colInner, 100 - innerOpacity),
      linewidth = 1)
 
 pOutU = plot(
      upperOuter,
      title = "MRC R2 (Outer)",
-     color = color.new(colOuter, 20),
+     color = color.new(colOuter, 100 - outerOpacity),
      linewidth = 1)
 
 pOutL = plot(
      lowerOuter,
      title = "MRC S2 (Outer)",
-     color = color.new(colOuter, 20),
+     color = color.new(colOuter, 100 - outerOpacity),
      linewidth = 1)
 
 
@@ -383,7 +472,7 @@ fill(
      pInnU,
      pOutU,
      color = showFill
-         ? color.new(colOuter, 88)
+         ? color.new(colOuter, 100 - fillOpacity)
          : na,
      title = "Upper MRC Shade")
 
@@ -391,7 +480,7 @@ fill(
      pInnL,
      pOutL,
      color = showFill
-         ? color.new(colInner, 88)
+         ? color.new(colInner, 100 - fillOpacity)
          : na,
      title = "Lower MRC Shade")
 
@@ -403,7 +492,7 @@ fill(
 plot(
      showMean ? meanline : na,
      title = "MRC Mean",
-     color = color.new(colMean, 0),
+     color = color.new(colMean, 100 - meanOpacity),
      linewidth = 2)
 
 
@@ -414,7 +503,7 @@ plot(
 plot(
      showMA ? maVal : na,
      title = "200 SMMA",
-     color = color.new(maPlotColor, 0),
+     color = color.new(maPlotColor, 100 - maOpacity),
      linewidth = 2)
 
 
@@ -587,56 +676,78 @@ qqeShort = (maShortOk and gapShortOk) ?
 // TP TARGET + STOP TRACKING
 // ============================================================================
 //
-// After a valid signal, track the OPPOSITE outer band as the expected
-// target — a dot that moves with the band every bar until price actually
-// touches it, then goes away until the next signal. A fresh signal (either
-// direction) always takes over the tracking, even mid-track.
+// After a valid signal, track the target — per trader request 2026-08-20,
+// TP is always the BOTTOM outer band (S2), for either direction (was
+// previously the opposite band, i.e. top for a long / bottom for a short —
+// changed on request, not a bug). It moves with the band every bar until
+// price actually touches it, then goes away until the next signal. A
+// fresh signal (either direction) always takes over the tracking, even
+// mid-track.
 //
 // The stop is on the SAME side as entry — S2 for a long, R2 for a short —
-// and, per trader request 2026-08-20, FOLLOWS that band live every bar
-// (same as the TP dot does for the opposite band) instead of freezing at
-// the signal-bar value. If price is currently within `slBufferTicks` of
-// that band, S2/R2 would leave almost no room, so a fixed `slFixedTicks`
-// from the current close is used on that bar instead — this is
-// re-evaluated every bar too, so the stop can hop between "on the band"
-// and "fixed distance from price" as the two get close, not just once at
-// entry. Not a one-directional ratchet: it moves wherever the band (or the
-// buffer fallback) currently is, in either direction — ask if you want it
-// to only ever tighten, never loosen.
+// and follows that band live every bar (like the TP dot) UNTIL price comes
+// within `slBufferTicks` of it. At that point, per trader request
+// 2026-08-20, the stop LOCKS: it's no longer "fixed" if it's still being
+// recomputed off the live `close` every bar (that's just a very tight
+// trail, not fixed) — so the first bar the buffer condition is met, the
+// fixed-tick level is calculated ONCE and held (`slIsFixed` / `slFixedLvl`)
+// for the rest of the trade, even if price later drifts back away from the
+// band. Resets on every new signal and on a target/stop hit.
 // ============================================================================
 
 tick = tickOverride > 0 ? tickOverride : syminfo.mintick
 
-var int qqeDir = 0   // 1 = tracking a long (target = upper outer, stop follows lower outer), -1 = a short, 0 = none
+var int   qqeDir     = 0     // 1 = tracking a long, -1 = a short, 0 = none
+var bool  slIsFixed  = false // true once the tick-stop fallback has locked in for this trade
+var float slFixedLvl = na    // the frozen fixed-tick stop price, once locked
 
 if not na(qqeLong)
-    qqeDir := 1
+    qqeDir     := 1
+    slIsFixed  := false
+    slFixedLvl := na
 if not na(qqeShort)
-    qqeDir := -1
+    qqeDir     := -1
+    slIsFixed  := false
+    slFixedLvl := na
+
+// Lock the fixed-tick stop the first bar price comes within the buffer of
+// the entry-side band — once locked it stays put, it does not keep
+// recomputing off `close` (that would make it drift with price, not fixed).
+if qqeDir == 1 and not slIsFixed and math.abs(close - lowerOuter) <= slBufferTicks * tick
+    slIsFixed  := true
+    slFixedLvl := close - slFixedTicks * tick
+
+if qqeDir == -1 and not slIsFixed and math.abs(upperOuter - close) <= slBufferTicks * tick
+    slIsFixed  := true
+    slFixedLvl := close + slFixedTicks * tick
 
 slLevel = qqeDir == 1 ?
-     (math.abs(close - lowerOuter) <= slBufferTicks * tick ? close - slFixedTicks * tick : lowerOuter) :
+     (slIsFixed ? slFixedLvl : lowerOuter) :
      qqeDir == -1 ?
-     (math.abs(upperOuter - close) <= slBufferTicks * tick ? close + slFixedTicks * tick : upperOuter) :
+     (slIsFixed ? slFixedLvl : upperOuter) :
      na
 
 if qqeDir == 1
     if high >= upperOuter
-        qqeDir := 0    // target hit
+        qqeDir     := 0    // target hit
+        slIsFixed  := false
+        slFixedLvl := na
     else if low <= slLevel
-        qqeDir := 0    // stopped out
+        qqeDir     := 0    // stopped out
+        slIsFixed  := false
+        slFixedLvl := na
 
 if qqeDir == -1
     if low <= lowerOuter
-        qqeDir := 0    // target hit
+        qqeDir     := 0    // target hit
+        slIsFixed  := false
+        slFixedLvl := na
     else if high >= slLevel
-        qqeDir := 0    // stopped out
+        qqeDir     := 0    // stopped out
+        slIsFixed  := false
+        slFixedLvl := na
 
-tpLevel = qqeDir == 1 ?
-     upperOuter :
-     qqeDir == -1 ?
-     lowerOuter :
-     na
+tpLevel = qqeDir != 0 ? lowerOuter : na   // always the bottom line, per request
 
 slPlot = qqeDir != 0 ? slLevel : na
 
@@ -652,7 +763,7 @@ plotshape(
      textcolor = color.white,
      style = shape.labelup,
      location = location.belowbar,
-     color = color.green,
+     color = color.new(colQQELong, 100 - qqeOpacity),
      size = size.tiny)
 
 plotshape(
@@ -662,7 +773,7 @@ plotshape(
      textcolor = color.white,
      style = shape.labeldown,
      location = location.abovebar,
-     color = color.red,
+     color = color.new(colQQEShort, 100 - qqeOpacity),
      size = size.tiny)
 
 
@@ -674,7 +785,7 @@ plot(
      showTP ? tpLevel : na,
      title = "TP Target",
      style = plot.style_circles,
-     color = color.new(colTP, 0),
+     color = color.new(colTP, 100 - tpOpacity),
      linewidth = 3)
 
 
@@ -686,7 +797,7 @@ plot(
      showSL ? slPlot : na,
      title = "Stop Level",
      style = plot.style_circles,
-     color = color.new(colSL, 0),
+     color = color.new(colSL, 100 - slOpacity),
      linewidth = 3)
 
 
