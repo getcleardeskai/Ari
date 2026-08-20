@@ -122,11 +122,21 @@ edge (touch → signal → quick stop/target → re-touch → new signal → rep
 signal that occurs during cooldown isn't wasted — the touch stays armed and waits for the next
 fresh signal once the cooldown clears.
 
-**2026-08-20:** trader reported long/short entries came out entirely reversed. Fixed by swapping
-which setup routes to which direction — the lower-band-touch setup now triggers a short, the
-upper-band-touch setup now triggers a long (same underlying conditions, just re-routed). Exits/
-targets/stops needed no change since they key off actual position direction
-(`strategy.position_size`), not which setup fired.
+**2026-08-20:** trader initially reported long/short entries reversed; the swap fix from that
+report was applied then **reverted** the same day — trader confirmed the original direction
+mapping was correct all along.
+
+**2026-08-20, later:** trader shared several chart screenshots of trades they felt were wrong,
+without full explanation for most of them (asked Claude to diagnose from the charts directly).
+Reading exact bar-by-bar logic from small, dense screenshots isn't fully reliable, but one
+screenshot came with actual reasoning: a long exited "a bit early" right as price approached the
+target and started to reverse. Diagnosed cause: take-profit was a live limit order at the inner
+band, firing the instant price wicked into it intrabar — even a brief spike that immediately
+pulled back would trigger it. Fixed: **stop stays intrabar/fast** (a stop firing quickly is
+correct — it's there to cap damage), but **take-profit now requires a confirmed candle close**
+beyond the inner band, not just a touch. The other screenshots (dense cluster of Long/Short/Exit
+labels) look like the same whipsaw-in-chop pattern the cooldown was meant to address — worth
+re-checking after this build to see if they're resolved or need a longer cooldown.
 
 The diagnostic funnel table and rule toggles from the debugging phase were removed from the
 script now that the ruleset is settled — they did their job (found the real bugs) and would just

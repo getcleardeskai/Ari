@@ -20,10 +20,11 @@
 //   5. No volume filter for this version — can be added back once this
 //      simple version is validated.
 //
-// Exit: take profit when price touches the INNER band on the opposite side
-// (R1 for longs, S1 for shorts) — a continuously-updated limit order at the
-// live level, not frozen at entry. Stop loss is a fixed 70 ticks from entry
-// (2026-08-19, updated — was the outer band, now a plain tick count).
+// Exit: take profit when a candle CLOSES beyond the INNER band on the
+// opposite side (R1 for longs, S1 for shorts) — confirmed close, not just
+// an intrabar wick touch (2026-08-20, changed from a live limit order
+// after it was firing on brief spikes that immediately reversed). Stop
+// loss is a fixed 70 ticks from entry, stays intrabar/fast on purpose.
 //
 // MRC is an exact port of fareidzulkifli's "Mean Reversion Channel"
 // (SuperSmoother variant): mean line = SuperSmoother(hlc3, 200); band width
@@ -257,20 +258,13 @@ if barstate.isconfirmed
     if high >= upper2
         touchedUpper := true
 
-// NOTE 2026-08-20: long/short deliberately swapped here per trader report
-// that entries were coming out reversed — the "lower band touch + bullish-
-// looking setup" condition below now triggers a SHORT, and the "upper band
-// touch" condition triggers a LONG. If this was actually correct before and
-// the mix-up was elsewhere (e.g. just eyeballing the chart), say so and
-// this swap gets reverted — but taken at face value, this is the minimal
-// fix: same conditions, entries routed to the opposite direction.
 doLongEntry  = false
 doShortEntry = false
 if barstate.isconfirmed and biasLongOk and touchedLower and qqeLongSignal and cooldownOk
-    doShortEntry := true
+    doLongEntry := true
     touchedLower := false   // consumed
 if barstate.isconfirmed and biasShortOk and touchedUpper and qqeShortSignal and cooldownOk
-    doLongEntry := true
+    doShortEntry := true
     touchedUpper := false   // consumed
 
 // ---------------------------------------------------------------------------
@@ -284,12 +278,22 @@ if longCondition
 if shortCondition
     strategy.entry("Short", strategy.short)
 
-// Target is LIVE — continuously updated each bar, not frozen at entry (R1
-// for longs, S1 for shorts). Stop is a fixed tick count from entry.
+// Stop stays fast/intrabar — a stop-loss firing quickly is correct, it's
+// there to cap damage the moment price moves against you.
 if strategy.position_size > 0
-    strategy.exit("Long Exit", "Long", stop = strategy.position_avg_price - stopTicks * tick, limit = upper1)
+    strategy.exit("Long Stop", "Long", stop = strategy.position_avg_price - stopTicks * tick)
 if strategy.position_size < 0
-    strategy.exit("Short Exit", "Short", stop = strategy.position_avg_price + stopTicks * tick, limit = lower1)
+    strategy.exit("Short Stop", "Short", stop = strategy.position_avg_price + stopTicks * tick)
+
+// Take-profit, by contrast, now requires a CONFIRMED CANDLE CLOSE beyond
+// the inner band (R1 for longs, S1 for shorts) — not just an intrabar
+// wick touching it. 2026-08-20: a live limit order was firing on brief
+// spikes that immediately reversed ("selling a bit early" right as the
+// real move started) — this waits for the close to actually confirm it.
+if barstate.isconfirmed and strategy.position_size > 0 and close >= upper1
+    strategy.close("Long", comment = "TP (confirmed close)")
+if barstate.isconfirmed and strategy.position_size < 0 and close <= lower1
+    strategy.close("Short", comment = "TP (confirmed close)")
 
 plotshape(longCondition, style = shape.triangleup, location = location.belowbar, color = colBull, size = size.small, title = "Long Entry")
 plotshape(shortCondition, style = shape.triangledown, location = location.abovebar, color = colBear, size = size.small, title = "Short Entry")
