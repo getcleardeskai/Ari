@@ -42,6 +42,16 @@
 //
 // Hand-written, not run through TradingView's compiler on my end — if it
 // throws an error on first load, send the exact error text.
+//
+// 2026-08-20 BUGFIX: `bias` is a persistent `var` and had no branch
+// resetting it once set — a real gap correctly armed it, but nothing ever
+// cleared it if the MA drifted back inside the band, so it stayed armed
+// indefinitely and could fire a trade many bars later off a touch+signal
+// that had nothing to do with an actual current gap (caught live: a Short
+// firing with the MA plainly sitting inside the channel, not gapping it at
+// all). Fixed: bias now resets to 0 the instant the gap condition stops
+// being true, so rule 2's "if above / if below" is enforced continuously,
+// not just once. See state machine comment below for the exact fix.
 // ============================================================================
 strategy("MRC Gap + QQE Strategy", overlay = true, pyramiding = 0,
      default_qty_type = strategy.percent_of_equity, default_qty_value = 10,
@@ -173,6 +183,18 @@ if barstate.isconfirmed
             touched := false
         else if gapLong
             bias    := 1
+            touched := false
+        else
+            // BUGFIX 2026-08-20: without this branch, `bias` (a `var`, so it
+            // persists across bars) never cleared once a real gap set it —
+            // it stayed armed indefinitely even after the MA drifted back
+            // inside the band, letting a much-later, unrelated touch+signal
+            // fire a trade off a gap that was no longer actually happening.
+            // Rule 2's condition ("if above, short / if below, long") has to
+            // hold NOW, not just "held once, at some point" — so the moment
+            // the MA is back inside the band, the setup is dead and must be
+            // re-armed by a fresh gap.
+            bias    := 0
             touched := false
 
         if bias == -1 and high >= upperBand

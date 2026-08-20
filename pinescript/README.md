@@ -19,6 +19,13 @@ cooldown, volume filter) — this is the rules as stated, nothing more. See
 contents → Add to Chart → Strategy Tester tab. Hand-written, not yet run through TradingView's
 compiler — send me the exact error text if it throws one on first load.
 
+**2026-08-20 bugfix:** trader caught a Short firing with the bias MA plainly sitting inside the
+MRC channel, not gapping it. Cause: `bias` is a persistent state variable that got armed on a real
+gap but was never reset once the MA drifted back inside the band — it stayed armed indefinitely
+and fired off a much-later, unrelated touch+signal. Fixed: bias now clears the instant the gap
+condition is no longer true, so rule 2 has to hold at the moment of entry, not just at some
+earlier point.
+
 ## `auto-reversion-strategy.pine` — hardened/iterated version
 
 Current focus (2026-08-19) — the mean-reversion half of the two-strategy plan (see
