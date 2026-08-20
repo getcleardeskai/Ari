@@ -27,6 +27,17 @@ dot (`plot.style_circles`) that tracks the opposite outer band every bar after a
 price actually touches it, then clears until the next signal — purely visual, shows where the
 setup expects price to go.
 
+**2026-08-20, later still — stop level + more customizability:** added a stop level, on the SAME
+side as entry (R2 for a short, S2 for a long), frozen at that band's value on the signal bar
+(unlike the TP dot, it does not keep moving afterward). If price was already within
+`slBufferTicks` (default 25) of that band right at entry, R2/S2 would leave almost no room, so a
+fixed `slFixedTicks` (default 100) from the entry price is used instead; clears on a target hit, a
+stop hit, or a fresh opposite signal taking over. Also added: independent on/off toggles for the
+SMMA-side gate and the price-in-gap gate (`enableMASideFilter` / `enablePriceGapFilter`, for
+testing/comparison), a choice of which band the price-in-gap check uses (Inner/Outer,
+`gapFilterBand`), and a tick-size override for symbols where `syminfo.mintick` isn't the desired
+unit.
+
 Pure visual indicator, no `strategy.*` — plots signals and alerts only, doesn't trade.
 
 **How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →

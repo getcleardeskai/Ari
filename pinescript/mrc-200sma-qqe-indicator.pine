@@ -44,6 +44,18 @@
 //     band, until price actually touches it — then it disappears until
 //     the next signal. Purely visual, no strategy/entries.
 //
+// STOP LEVEL (2026-08-20, added):
+//   - On the SAME side as entry — R2 for a short, S2 for a long — frozen
+//     at whatever that band's level was on the signal bar (unlike the TP
+//     dot, this does NOT keep moving with the band afterward; a stop is
+//     set once, at entry).
+//   - EXCEPTION: if price was already within `slBufferTicks` (default 25)
+//     of that band on the signal bar, R2/S2 is too tight to be a useful
+//     stop (almost no room), so a fixed `slFixedTicks` (default 100) from
+//     the entry price is used instead.
+//   - Clears the same way the TP dot does: on a target hit, a stop hit, or
+//     a fresh signal in either direction taking over the tracking.
+//
 // MRC sizing matches the original fareidzulkifli MRC:
 //   Inner multiplier = 1.0
 //   Outer multiplier = 2.415
@@ -145,6 +157,65 @@ colTP = input.color(
      color.orange,
      "TP target dot color",
      group = grpColor)
+
+colSL = input.color(
+     color.fuchsia,
+     "Stop level color",
+     group = grpColor)
+
+
+// ============================================================================
+// FILTER SETTINGS (customizability — turn either gate off independently to
+// compare, or change which band the price-in-gap check uses)
+// ============================================================================
+
+grpFilters = "Filters"
+
+enableMASideFilter = input.bool(
+     true,
+     "Require SMMA on the matching side (outer band)",
+     group = grpFilters)
+
+enablePriceGapFilter = input.bool(
+     true,
+     "Require price to have wicked into the gap zone",
+     group = grpFilters)
+
+gapFilterBand = input.string(
+     "Inner",
+     "Price-in-gap check band",
+     options = ["Inner", "Outer"],
+     group = grpFilters)
+
+
+// ============================================================================
+// STOP LOSS SETTINGS
+// ============================================================================
+
+grpRisk = "Stop Loss"
+
+showSL = input.bool(
+     true,
+     "Show stop level",
+     group = grpRisk)
+
+slBufferTicks = input.int(
+     25,
+     "Use fixed stop if entry price is within this many ticks of R2/S2",
+     minval = 0,
+     group = grpRisk)
+
+slFixedTicks = input.int(
+     100,
+     "Fixed stop (ticks) when within the buffer above",
+     minval = 1,
+     group = grpRisk)
+
+tickOverride = input.float(
+     0.0,
+     "Tick size override (0 = use symbol's own tick size)",
+     minval = 0.0,
+     group = grpRisk)
 
 
 // ============================================================================
@@ -457,10 +528,17 @@ qqeShortRaw = QQExshort == 1 ?
 // zone the "MRC SHADING" fill below draws) — not just have the SMMA
 // outside somewhere. Only signals that actually formed with price up
 // against (or past) that zone count now.
+//
+// `gapFilterBand` picks which line counts as "reached the gap": Inner
+// (R1/S1, the near edge of the shaded zone — the default) or Outer (R2/S2,
+// requiring price to have gone all the way through to the far edge).
 // ============================================================================
 
-priceInGapShort = high >= upperInner   // candle reached at least the inner band on the short side
-priceInGapLong  = low  <= lowerInner   // candle reached at least the inner band on the long side
+gapCheckUpper = gapFilterBand == "Inner" ? upperInner : upperOuter
+gapCheckLower = gapFilterBand == "Inner" ? lowerInner : lowerOuter
+
+priceInGapShort = high >= gapCheckUpper   // candle reached the chosen band on the short side
+priceInGapLong  = low  <= gapCheckLower   // candle reached the chosen band on the long side
 
 
 // ============================================================================
@@ -485,44 +563,85 @@ priceInGapLong  = low  <= lowerInner   // candle reached at least the inner band
 // 2026-08-20, later: added the price-in-gap condition above so a signal
 // also has to have price actually up against the band, not just the SMMA
 // sitting outside somewhere far from where price currently is.
+//
+// Both gates can be independently switched off via `enableMASideFilter` /
+// `enablePriceGapFilter` for testing/comparison — a disabled gate just
+// evaluates as always-true, so turning both off falls back to raw QQE.
 // ============================================================================
 
-qqeLong = (maBelowOuter and priceInGapLong) ?
+maLongOk  = not enableMASideFilter or maBelowOuter
+maShortOk = not enableMASideFilter or maAboveOuter
+gapLongOk  = not enablePriceGapFilter or priceInGapLong
+gapShortOk = not enablePriceGapFilter or priceInGapShort
+
+qqeLong = (maLongOk and gapLongOk) ?
      qqeLongRaw :
      na
 
-qqeShort = (maAboveOuter and priceInGapShort) ?
+qqeShort = (maShortOk and gapShortOk) ?
      qqeShortRaw :
      na
 
 
 // ============================================================================
-// TP TARGET TRACKING
+// TP TARGET + STOP TRACKING
 // ============================================================================
 //
 // After a valid signal, track the OPPOSITE outer band as the expected
 // target — a dot that moves with the band every bar until price actually
 // touches it, then goes away until the next signal. A fresh signal (either
 // direction) always takes over the tracking, even mid-track.
+//
+// The stop is on the SAME side as entry — R2 for a short, S2 for a long —
+// and is frozen at whatever that band's value was on the signal bar (it
+// does not keep moving afterward, unlike the TP dot). If price was already
+// within `slBufferTicks` of that band right at entry, R2/S2 would leave
+// almost no room, so a fixed `slFixedTicks` from the entry price is used
+// instead.
 // ============================================================================
 
-var int qqeDir = 0   // 1 = tracking a long's target (upper outer band), -1 = a short's (lower outer band), 0 = none
+tick = tickOverride > 0 ? tickOverride : syminfo.mintick
+
+var int   qqeDir  = 0     // 1 = tracking a long (target = upper outer, stop = lower outer side), -1 = a short, 0 = none
+var float slLevel = na
 
 if not na(qqeLong)
     qqeDir := 1
+    entryPrice = close
+    slLevel := math.abs(entryPrice - lowerOuter) <= slBufferTicks * tick ?
+         entryPrice - slFixedTicks * tick :
+         lowerOuter
+
 if not na(qqeShort)
     qqeDir := -1
+    entryPrice = close
+    slLevel := math.abs(upperOuter - entryPrice) <= slBufferTicks * tick ?
+         entryPrice + slFixedTicks * tick :
+         upperOuter
 
-if qqeDir == 1 and high >= upperOuter
-    qqeDir := 0   // target hit
-if qqeDir == -1 and low <= lowerOuter
-    qqeDir := 0   // target hit
+if qqeDir == 1
+    if high >= upperOuter
+        qqeDir := 0    // target hit
+        slLevel := na
+    else if low <= slLevel
+        qqeDir := 0    // stopped out
+        slLevel := na
+
+if qqeDir == -1
+    if low <= lowerOuter
+        qqeDir := 0    // target hit
+        slLevel := na
+    else if high >= slLevel
+        qqeDir := 0    // stopped out
+        slLevel := na
 
 tpLevel = qqeDir == 1 ?
      upperOuter :
      qqeDir == -1 ?
      lowerOuter :
      na
+
+slPlot = qqeDir != 0 ? slLevel : na
 
 
 // ============================================================================
@@ -559,6 +678,18 @@ plot(
      title = "TP Target",
      style = plot.style_circles,
      color = color.new(colTP, 0),
+     linewidth = 3)
+
+
+// ============================================================================
+// STOP LEVEL
+// ============================================================================
+
+plot(
+     showSL ? slPlot : na,
+     title = "Stop Level",
+     style = plot.style_circles,
+     color = color.new(colSL, 0),
      linewidth = 3)
 
 
