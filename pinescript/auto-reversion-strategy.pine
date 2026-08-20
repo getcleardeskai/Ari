@@ -34,7 +34,7 @@
 // opposite side (R1 for longs, S1 for shorts) — confirmed close, not just
 // an intrabar wick touch (2026-08-20, changed from a live limit order
 // after it was firing on brief spikes that immediately reversed). Stop
-// loss is a fixed 70 ticks from entry, stays intrabar/fast on purpose.
+// loss is a fixed 35 ticks from entry, stays intrabar/fast on purpose.
 //
 // MRC is an exact port of fareidzulkifli's "Mean Reversion Channel"
 // (SuperSmoother variant): mean line = SuperSmoother(hlc3, 200); band width
@@ -90,7 +90,7 @@ qqeFactor = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group =
 
 grpRisk = "Risk / Exit"
 useStop          = input.bool(true, "Use stop loss", group = grpRisk)
-stopTicks        = input.float(75, "Stop loss (ticks)", minval = 1, group = grpRisk)
+stopTicks        = input.float(35, "Stop loss (ticks)", minval = 1, group = grpRisk)
 useMrcTarget     = input.bool(true, "Use MRC inner-band take-profit", group = grpRisk)
 cooldownBars     = input.int(0, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
 touchLookbackBars = input.int(500, "Touch must have happened within this many bars", minval = 0, group = grpRisk)

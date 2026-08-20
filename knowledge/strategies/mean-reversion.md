@@ -196,8 +196,8 @@ Rather than pick a side, added to `../../pinescript/auto-reversion-strategy.pine
 
 - [x] MRC exact formula — resolved, see above.
 - [x] QQE exact signal logic — resolved, see above.
-- [ ] Stop-loss: fixed ticks vs. last swing low/high — which, and if fixed, confirm ~25 ticks.
-      (Both implemented as a toggle, defaulting to fixed-ticks.)
+- [x] Stop-loss: fixed ticks, confirmed 2026-08-20 (see below) — **35 ticks**. Swing-based stop
+      stays as an unused alternative idea, not implemented as a toggle.
 - [ ] Take-profit: which specific band level — defaulted to the outer band (R2/S2), matching "the
       second band" (inner=1st, outer=2nd). Confirm or correct once backtest results are in.
 - [ ] Volume average length (Hawkeye's default, or whatever you're actually using) — defaulted to
@@ -282,6 +282,15 @@ zone (`upper2_1`/`lower2_1`), per the earlier "the red BAND is the outermost ban
 that correction was about bias, not touch. Touch and bias now use different boundaries on purpose:
 touch = entering the band at all (upper2/lower2), bias = the MA clearing the entire band
 (upper2_1/lower2_1).
+
+**2026-08-20, rules restated + stop loss confirmed at 35 ticks:** trader restated the full
+ruleset from scratch in plain language (gap via the 200 MA fully clearing the MRC → directional
+bias → wait for a touch of the near band on the bias side → wait for a same-direction QQE signal,
+entering on its candle close → fixed-tick stop, opposite-band take-profit) and re-supplied the
+same QQE/MRC source scripts already ported here. Confirmed this matches the current
+`auto-reversion-strategy.pine` implementation rule-for-rule — no logic changes needed. The one
+concrete new number: **stop loss is 35 ticks**, not the 75 it had defaulted to since
+2026-08-19 (`stopTicks` updated 75 → 35; header comment corrected to match).
 
 ## Reference examples (from chart screenshots, 2026-08-19)
 
