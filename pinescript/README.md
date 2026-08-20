@@ -2,6 +2,45 @@
 
 Strategies/indicators implementing the model from `../knowledge/automation-architecture.md`.
 
+## `balance-shift-reversion-indicator.pine` — MRC + 200 SMMA + Volume + QQE (new ruleset)
+
+Added 2026-08-20. A ground-up build combining four separate source scripts the trader supplied,
+each trimmed to only the piece the trading rules actually use:
+
+- **MRC** (fareidzulkifli) — only the SuperSmoother mean + inner/outer bands and their plots. The
+  "condition"/overbought-oversold classification and the whole multi-timeframe analysis table from
+  the public script are dropped — unused by the trading logic, only the bands themselves matter.
+  All the MRC sizing inputs (source, length, inner/outer multiplier, zone shading) stay editable.
+- **200 SMMA** — same recursion as `ta.rma`, used directly.
+- **HawkEye Volume** (aamonkey/LazyBear) — only the "volume vs. its own average" comparison is
+  used; the red/green/gray bar classification and the histogram plot are both dropped per request.
+  Shown as a status line in a top-right info box instead of a full volume pane.
+- **QQE** (Glaz Metastock version — a different formula from the colinmck "QQE signals" script used
+  in this repo's other indicators; ported as supplied). Only the fast trend line is used — the
+  Slow-factor line from the original script isn't referenced by the trading rules and was left out.
+
+**Trading logic:**
+1. **Bias** — 200 SMMA sits fully outside the *entire* MRC (past the outer band): above → short
+   bias, below → long bias. Recomputed fresh every bar, not a one-time latch — a bias that doesn't
+   clear the instant the SMMA re-enters the channel was a real bug found and fixed earlier in this
+   project's other scripts, not something to reintroduce here.
+2. **Arm** — price closes back inside the outer band while biased. Stays armed across however many
+   bars it takes for the signal to print, as long as the bias itself keeps holding; clears the
+   instant the bias breaks.
+3. **Signal** — a QQE trend-flip in the matching direction while armed, gated on that same bar's
+   volume being above its average. If the flip happens but volume isn't there yet, one grace bar:
+   volume clearing on the very next candle still counts, no further extension beyond that.
+4. **Exit** — SL = most recent confirmed swing high (short) / swing low (long) via
+   `ta.pivothigh`/`ta.pivotlow`, the same idiom already used in `trend-bias-qqe-strategy.pine` in
+   this repo. TP = whichever comes first: 1.5x that risk distance, or first contact with the inner
+   edge of the opposing band (already drawn as the R1/S1 line, no separate plot needed for it).
+
+Pure indicator — no `strategy.*`, plots signals/levels and alerts only.
+
+**How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →
+Add to Chart. Hand-written, not yet run through TradingView's compiler — send me the exact error
+text if it throws one on first load.
+
 ## `mrc-200sma-qqe-indicator.pine` — MRC + 200 SMMA + QQE, signals gated by zone
 
 Added 2026-08-20 — trader's own hand-written version (converted to v6, MRC sizing back to the

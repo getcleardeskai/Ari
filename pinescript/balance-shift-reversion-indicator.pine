@@ -1,0 +1,417 @@
+//@version=6
+// ============================================================================
+// Balance Shift Reversion — MRC + 200 SMMA + Volume + QQE
+//
+// Combines four separate source scripts into one indicator, each trimmed to
+// only the piece actually used by the trading rules below:
+//
+//   - MRC ("Mean Reversion Channel", fareidzulkifli): only the SuperSmoother
+//     mean + inner/outer bands and their plots. The other filter types,
+//     the "condition"/overbought-oversold classification, and the whole
+//     MTF analysis table are dropped — none of that feeds the trading
+//     logic, only the bands themselves do. All the MRC sizing inputs
+//     (source, length, inner/outer multiplier, zone) are still exposed.
+//   - 200 SMMA (generic smoothed MA script): same math as ta.rma, used
+//     directly instead of hand-rolling the recursive formula.
+//   - HawkEye Volume (aamonkey/LazyBear): only the "volume vs. its own
+//     average" comparison is used — the red/green/gray bar classification
+//     and the histogram plot are both dropped (not needed per request).
+//     Shown as a status line in the info box top-right instead.
+//   - QQE (Glaz Metastock version — NOTE: a different formula from the
+//     colinmck "QQE signals" script used in this repo's other indicators;
+//     ported as given). Only the FAST trend line is used; the Slow-factor
+//     line from the original script is unused by the trading rules here
+//     and was left out.
+//
+// TRADING LOGIC (as specified):
+//   1. Bias: 200 SMMA sits fully outside the ENTIRE MRC (past the outer
+//      band), either side. Above -> short bias, below -> long bias.
+//      Recomputed fresh every bar (not a one-time latch) — a bias that
+//      doesn't clear the instant the SMMA re-enters the channel is a bug,
+//      not a feature (this exact mistake was made and fixed earlier in
+//      this project's other scripts).
+//   2. Wait for price to close back inside the outer band while biased —
+//      this arms the setup. Stays armed across however many bars it takes
+//      for the signal to print, as long as the bias itself keeps holding;
+//      clears the instant the bias breaks.
+//   3. Once armed, a QQE trend-flip in the matching direction only counts
+//      if that SAME bar's volume is above its average. If the flip
+//      happens but volume isn't there yet, one grace bar: if volume
+//      clears on the very NEXT candle, the signal prints there instead.
+//      No further extension beyond that one grace bar.
+//   4. Entry: SL = most recent confirmed swing high (short) / swing low
+//      (long), via ta.pivothigh/pivotlow — same idiom already used in
+//      trend-bias-qqe-strategy.pine in this repo. TP = whichever comes
+//      first: 1.5x that risk distance, or first contact with the INNER
+//      edge of the opposing band (already drawn as the R1/S1 line, no
+//      separate plot needed for it).
+//
+// Pure indicator — no strategy.*, plots signals/levels and alerts only.
+//
+// Hand-written, not run through TradingView's compiler on my end — if it
+// throws an error on first load, send the exact error text.
+// ============================================================================
+
+indicator("Balance Shift Reversion (MRC + SMMA + Volume + QQE)", overlay = true, max_lines_count = 500)
+
+
+// ============================================================================
+// MRC INPUTS
+// ============================================================================
+
+grpMRC = "MRC"
+
+mrcSource = input.source(hlc3, "Price source", group = grpMRC)
+mrcLength = input.int(200, "Lookback period", minval = 1, group = grpMRC)
+innerMult = input.float(1.0, "Inner channel size multiplier", minval = 0.1, group = grpMRC)
+outerMult = input.float(2.415, "Outer channel size multiplier", minval = 0.1, group = grpMRC)
+showMRCZone = input.bool(true, "Shade between inner and outer bands", group = grpMRC)
+
+
+// ============================================================================
+// 200 SMMA
+// ============================================================================
+
+grpMA = "200 SMMA"
+
+smmaSource = input.source(close, "Source", group = grpMA)
+smmaLen = input.int(200, "Length", minval = 1, group = grpMA)
+
+
+// ============================================================================
+// VOLUME (HawkEye's "vs. average" comparison only)
+// ============================================================================
+
+grpVol = "Volume"
+
+volAvgLen = input.int(200, "Volume average length", minval = 1, group = grpVol)
+
+
+// ============================================================================
+// QQE (Glaz Metastock version — fast line only)
+// ============================================================================
+
+grpQQE = "QQE"
+
+qqeSource = input.source(close, "Source", group = grpQQE)
+qqeRsiLen = input.int(14, "RSI length", minval = 1, group = grpQQE)
+qqeRsiSmooth = input.int(2, "RSI EMA smoothing", minval = 1, group = grpQQE)
+qqeFastFactor = input.float(2.618, "Fast ATR factor", minval = 0.1, group = grpQQE)
+qqeAtrLen = input.int(14, "ATR-of-RSI smoothing length", minval = 1, group = grpQQE)
+
+
+// ============================================================================
+// RISK / EXIT
+// ============================================================================
+
+grpRisk = "Risk / Exit"
+
+swingLen = input.int(5, "Swing pivot length (bars each side)", minval = 1, group = grpRisk)
+tpRMultiple = input.float(1.5, "TP as a multiple of SL risk", minval = 0.1, group = grpRisk)
+showSL = input.bool(true, "Show SL line", group = grpRisk)
+showTP = input.bool(true, "Show 1.5R TP dot", group = grpRisk)
+
+
+// ============================================================================
+// VISUALS
+// ============================================================================
+
+grpVisual = "Visuals"
+
+colInner = input.color(color.green, "Inner band color", group = grpVisual)
+colOuter = input.color(color.red, "Outer band color", group = grpVisual)
+colMean = input.color(#FFCD00, "Mean line color", group = grpVisual)
+colMA = input.color(color.white, "200 SMMA color (inside MRC)", group = grpVisual)
+colMAOutside = input.color(color.rgb(100, 181, 246), "200 SMMA color (outside MRC)", group = grpVisual)
+colLong = input.color(color.green, "Long signal color", group = grpVisual)
+colShort = input.color(color.red, "Short signal color", group = grpVisual)
+colTP = input.color(color.orange, "TP color", group = grpVisual)
+colSL = input.color(color.fuchsia, "SL color", group = grpVisual)
+showInfoBox = input.bool(true, "Show status box (top-right)", group = grpVisual)
+
+
+// ============================================================================
+// SUPER SMOOTHER (MRC's mean/range filter)
+// ============================================================================
+
+f_supersmoother(src, len) =>
+    a1 = math.exp(-math.sqrt(2) * math.pi / len)
+    b1 = 2 * a1 * math.cos(math.sqrt(2) * math.pi / len)
+    c3 = -math.pow(a1, 2)
+    c2 = b1
+    c1 = 1 - c2 - c3
+    var float ss = na
+    ss := c1 * src + c2 * nz(ss[1], src[1]) + c3 * nz(ss[2], src[2])
+    ss
+
+
+// ============================================================================
+// MRC CALCULATION
+// ============================================================================
+
+meanline = f_supersmoother(mrcSource, mrcLength)
+meanrange = f_supersmoother(ta.tr, mrcLength)
+
+pi = math.pi
+multInner = pi * innerMult
+multOuter = pi * outerMult
+
+upperInner = meanline + meanrange * multInner   // R1
+lowerInner = meanline - meanrange * multInner   // S1
+upperOuter = meanline + meanrange * multOuter   // R2
+lowerOuter = meanline - meanrange * multOuter   // S2
+
+pInnU = plot(upperInner, "MRC R1 (Inner)", color = color.new(colInner, 30), linewidth = 1)
+pInnL = plot(lowerInner, "MRC S1 (Inner)", color = color.new(colInner, 30), linewidth = 1)
+pOutU = plot(upperOuter, "MRC R2 (Outer)", color = color.new(colOuter, 20), linewidth = 1)
+pOutL = plot(lowerOuter, "MRC S2 (Outer)", color = color.new(colOuter, 20), linewidth = 1)
+
+fill(pInnU, pOutU, color = showMRCZone ? color.new(colOuter, 88) : na, title = "Upper MRC Shade")
+fill(pInnL, pOutL, color = showMRCZone ? color.new(colInner, 88) : na, title = "Lower MRC Shade")
+
+plot(meanline, "MRC Mean", color = color.new(colMean, 0), linewidth = 2)
+
+
+// ============================================================================
+// 200 SMMA
+// ============================================================================
+
+smmaVal = ta.rma(smmaSource, smmaLen)   // mathematically the same recursion as the pasted SMMA script
+
+smmaAboveOuter = smmaVal > upperOuter   // short bias
+smmaBelowOuter = smmaVal < lowerOuter   // long bias
+smmaOutsideMRC = smmaAboveOuter or smmaBelowOuter
+
+plot(smmaVal, "200 SMMA", color = color.new(smmaOutsideMRC ? colMAOutside : colMA, 0), linewidth = 2)
+
+
+// ============================================================================
+// VOLUME
+// ============================================================================
+
+volAvg = ta.sma(volume, volAvgLen)
+volAboveAvg = volume > volAvg
+
+
+// ============================================================================
+// QQE (Glaz Metastock version, fast line)
+// ============================================================================
+
+f_wima(src, length) =>
+    var float ma = na
+    ma := (src + nz(ma[1]) * (length - 1)) / length
+    ma
+
+RSIndex = ta.ema(ta.rsi(qqeSource, qqeRsiLen), qqeRsiSmooth)
+
+TH = RSIndex[1] > RSIndex ? RSIndex[1] : RSIndex
+TL = RSIndex[1] < RSIndex ? RSIndex[1] : RSIndex
+TR = TH - TL
+
+AtrRsi = f_wima(TR, qqeAtrLen)
+SmoothedAtrRsi = f_wima(AtrRsi, qqeAtrLen)
+
+DeltaFastAtrRsi = SmoothedAtrRsi * qqeFastFactor
+
+newshortband = RSIndex + DeltaFastAtrRsi
+newlongband = RSIndex - DeltaFastAtrRsi
+
+var float longband = na
+var float shortband = na
+
+longband := na(longband[1]) ?
+     newlongband :
+     (RSIndex[1] > longband[1] and RSIndex > longband[1] ? math.max(longband[1], newlongband) : newlongband)
+
+shortband := na(shortband[1]) ?
+     newshortband :
+     (RSIndex[1] < shortband[1] and RSIndex < shortband[1] ? math.min(shortband[1], newshortband) : newshortband)
+
+var int trend = 1
+trend := ta.cross(RSIndex, shortband[1]) ? 1 : ta.cross(longband[1], RSIndex) ? -1 : nz(trend[1], 1)
+
+trendFlipped = trend != trend[1]
+qqeBuyFlip = trendFlipped and trend == 1
+qqeSellFlip = trendFlipped and trend == -1
+
+
+// ============================================================================
+// SWING HIGH / LOW (for SL) — same ta.pivothigh/pivotlow idiom already used
+// in trend-bias-qqe-strategy.pine. A confirmed pivot is only known
+// `swingLen` bars after it actually happened — inherent lag, not a bug.
+// ============================================================================
+
+var float lastSwingHigh = na
+var float lastSwingLow = na
+
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow := pl
+
+
+// ============================================================================
+// BIAS + ARMING (price back inside the bands while biased)
+// ============================================================================
+
+priceInBands = close <= upperOuter and close >= lowerOuter
+
+var bool armedLong = false
+var bool armedShort = false
+
+if smmaBelowOuter and priceInBands
+    armedLong := true
+if not smmaBelowOuter
+    armedLong := false
+
+if smmaAboveOuter and priceInBands
+    armedShort := true
+if not smmaAboveOuter
+    armedShort := false
+
+
+// ============================================================================
+// SIGNAL — QQE flip while armed, gated on volume, with a 1-bar grace period
+// if the flip happens right before volume actually clears.
+// ============================================================================
+
+var bool longPendingVol = false
+var bool shortPendingVol = false
+
+longSignal = false
+shortSignal = false
+
+if armedLong and qqeBuyFlip and not na(lastSwingLow)
+    if volAboveAvg
+        longSignal := true
+        armedLong := false
+    else
+        longPendingVol := true
+else if longPendingVol
+    if volAboveAvg and not na(lastSwingLow)
+        longSignal := true
+        armedLong := false
+    longPendingVol := false
+
+if armedShort and qqeSellFlip and not na(lastSwingHigh)
+    if volAboveAvg
+        shortSignal := true
+        armedShort := false
+    else
+        shortPendingVol := true
+else if shortPendingVol
+    if volAboveAvg and not na(lastSwingHigh)
+        shortSignal := true
+        armedShort := false
+    shortPendingVol := false
+
+
+// ============================================================================
+// TRADE TRACKING (visual only — no strategy.* orders)
+// ============================================================================
+
+var int posDir = 0
+var float entryPrice = na
+var float slPrice = na
+var float tpRPrice = na
+
+if longSignal
+    posDir := 1
+    entryPrice := close
+    slPrice := lastSwingLow
+    riskDist = entryPrice - slPrice
+    tpRPrice := entryPrice + tpRMultiple * riskDist
+
+if shortSignal
+    posDir := -1
+    entryPrice := close
+    slPrice := lastSwingHigh
+    riskDist = slPrice - entryPrice
+    tpRPrice := entryPrice - tpRMultiple * riskDist
+
+// Exit: whichever comes first — the 1.5R target, or first contact with the
+// inner edge of the opposing band (upperInner for longs, lowerInner for
+// shorts) — or the SL.
+if posDir == 1
+    if high >= tpRPrice or high >= upperInner
+        posDir := 0
+        entryPrice := na
+        slPrice := na
+        tpRPrice := na
+    else if low <= slPrice
+        posDir := 0
+        entryPrice := na
+        slPrice := na
+        tpRPrice := na
+
+if posDir == -1
+    if low <= tpRPrice or low <= lowerInner
+        posDir := 0
+        entryPrice := na
+        slPrice := na
+        tpRPrice := na
+    else if high >= slPrice
+        posDir := 0
+        entryPrice := na
+        slPrice := na
+        tpRPrice := na
+
+slPlot = posDir != 0 ? slPrice : na
+tpPlot = posDir != 0 ? tpRPrice : na
+
+
+// ============================================================================
+// SIGNAL LABELS
+// ============================================================================
+
+plotshape(longSignal, title = "Long", text = "Buy + Confirmation", textcolor = color.white,
+     style = shape.labelup, location = location.belowbar, color = colLong, size = size.small)
+
+plotshape(shortSignal, title = "Short", text = "Sell + Confirmation", textcolor = color.white,
+     style = shape.labeldown, location = location.abovebar, color = colShort, size = size.small)
+
+
+// ============================================================================
+// TP / SL PLOTS
+// ============================================================================
+
+plot(showTP ? tpPlot : na, title = "1.5R TP", style = plot.style_circles, color = color.new(colTP, 0), linewidth = 3)
+plot(showSL ? slPlot : na, title = "SL (swing level)", style = plot.style_circles, color = color.new(colSL, 0), linewidth = 3)
+
+
+// ============================================================================
+// STATUS BOX (top-right) — replaces the HawkEye histogram: just the pieces
+// that feed the trading logic, at a glance.
+// ============================================================================
+
+f_biasText() => smmaAboveOuter ? "SHORT" : smmaBelowOuter ? "LONG" : "NONE"
+f_biasColor() => smmaAboveOuter ? color.red : smmaBelowOuter ? color.green : color.gray
+
+if showInfoBox and barstate.islast
+    var table statusBox = table.new(position.top_right, 2, 5, border_width = 1, border_color = color.new(color.gray, 50))
+
+    table.cell(statusBox, 0, 0, "Bias", bgcolor = color.new(color.gray, 70), text_color = color.white, text_size = size.small)
+    table.cell(statusBox, 1, 0, f_biasText(), bgcolor = color.new(color.gray, 70), text_color = f_biasColor(), text_size = size.small)
+
+    table.cell(statusBox, 0, 1, "Armed", bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(statusBox, 1, 1, armedLong ? "Long" : armedShort ? "Short" : "No", bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+
+    table.cell(statusBox, 0, 2, "Volume", bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(statusBox, 1, 2, volAboveAvg ? "Above Avg" : "Below Avg", bgcolor = color.new(color.black, 60), text_color = volAboveAvg ? color.green : color.gray, text_size = size.small)
+
+    table.cell(statusBox, 0, 3, "QQE Trend", bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(statusBox, 1, 3, trend == 1 ? "Bull" : "Bear", bgcolor = color.new(color.black, 60), text_color = trend == 1 ? color.green : color.red, text_size = size.small)
+
+    table.cell(statusBox, 0, 4, "Position", bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+    table.cell(statusBox, 1, 4, posDir == 1 ? "Long" : posDir == -1 ? "Short" : "Flat", bgcolor = color.new(color.black, 60), text_color = color.white, text_size = size.small)
+
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(longSignal, title = "Long", message = "Balance Shift Long — Buy + Confirmation")
+alertcondition(shortSignal, title = "Short", message = "Balance Shift Short — Sell + Confirmation")
