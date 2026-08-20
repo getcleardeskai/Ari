@@ -134,9 +134,16 @@ target and started to reverse. Diagnosed cause: take-profit was a live limit ord
 band, firing the instant price wicked into it intrabar — even a brief spike that immediately
 pulled back would trigger it. Fixed: **stop stays intrabar/fast** (a stop firing quickly is
 correct — it's there to cap damage), but **take-profit now requires a confirmed candle close**
-beyond the inner band, not just a touch. The other screenshots (dense cluster of Long/Short/Exit
-labels) look like the same whipsaw-in-chop pattern the cooldown was meant to address — worth
-re-checking after this build to see if they're resolved or need a longer cooldown.
+beyond the inner band, not just a touch.
+
+**2026-08-20, later still:** trader pointed at a specific "Long" entry firing while price was
+clearly in the middle of the channel, nowhere near the lower band. Root cause: removing the
+"reset touch on bias break" logic earlier (to fix missed trades) left the touch flag with **no
+expiration at all** — a touch from long ago stayed armed indefinitely until *any* later QQE
+signal consumed it, even after price had drifted far away. Fixed with a middle ground: touch now
+expires after `touchExpiryBars` (default 20) bars with no signal, instead of either resetting on
+any single-bar bias flicker (too strict, caused missed trades) or never expiring (too loose,
+caused this).
 
 The diagnostic funnel table and rule toggles from the debugging phase were removed from the
 script now that the ruleset is settled — they did their job (found the real bugs) and would just

@@ -66,8 +66,9 @@ rsiSmooth = input.int(5, "RSI smoothing (EMA)", minval = 1, group = grpQQE)
 qqeFactor = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group = grpQQE)
 
 grpRisk = "Risk / Exit"
-stopTicks   = input.float(70, "Stop loss (ticks)", minval = 1, group = grpRisk)
-cooldownBars = input.int(10, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
+stopTicks     = input.float(70, "Stop loss (ticks)", minval = 1, group = grpRisk)
+cooldownBars  = input.int(10, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
+touchExpiryBars = input.int(20, "Touch expires after this many bars with no signal", minval = 1, group = grpRisk)
 
 grpColor = "Colors"
 colBull = input.color(#089981, "Bullish color", group = grpColor)
@@ -240,23 +241,37 @@ if barstate.isconfirmed
 cooldownOk = barsSinceFlat >= cooldownBars
 
 // ---------------------------------------------------------------------------
-// Setup — persistent touch, not same-bar. Once price has touched the outer
-// band, remember that; take the next QQE long/short signal whenever it
-// comes (same bar or many bars later), as long as bias is true AT THAT
-// MOMENT. The touch itself does NOT get erased by a momentary bias flicker
-// in between (that was the earlier behavior and is the likely cause of
-// setups that looked valid on the chart silently not firing — bias can
-// flip for a single bar near the boundary without the setup actually being
-// invalid). Touch only clears once consumed by an actual entry.
+// Setup — touch is remembered for a LIMITED window, not same-bar and not
+// forever. Once price touches the outer band, the next QQE long/short
+// signal within touchExpiryBars still counts, even if it's several bars
+// later. But it DOES expire — 2026-08-20: an earlier version let the touch
+// stay armed indefinitely, which meant a signal firing much later, after
+// price had already drifted far from the band, would still fire an entry
+// nowhere near where the touch happened. This is the middle ground between
+// that (too loose) and resetting on any single-bar bias flicker (too
+// strict — see the earlier bug this replaced).
 // ---------------------------------------------------------------------------
 var bool touchedLower = false
 var bool touchedUpper = false
+var int  barsSinceTouchLower = 999999
+var int  barsSinceTouchUpper = 999999
 
 if barstate.isconfirmed
     if low <= lower2
         touchedLower := true
+        barsSinceTouchLower := 0
+    else if touchedLower
+        barsSinceTouchLower += 1
+        if barsSinceTouchLower > touchExpiryBars
+            touchedLower := false
+
     if high >= upper2
         touchedUpper := true
+        barsSinceTouchUpper := 0
+    else if touchedUpper
+        barsSinceTouchUpper += 1
+        if barsSinceTouchUpper > touchExpiryBars
+            touchedUpper := false
 
 doLongEntry  = false
 doShortEntry = false
