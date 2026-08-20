@@ -205,6 +205,15 @@ Rather than pick a side, added to `../../pinescript/auto-reversion-strategy.pine
 - [ ] How many candles counts as "the next couple" for delayed volume confirmation — defaulted to
       3.
 
+**2026-08-20, later still:** trader asked why entries were being blocked — clarified they want
+every valid touch+bias+signal combination taken immediately, no exceptions. `cooldownBars`
+defaulted to 0 (was 10) and `touchExpiryBars` defaulted to effectively unlimited (was 20) — both
+kept as tunable inputs, just off by default now. Worth noting: the original concern that led to
+the touch-expiry window (a stale touch firing an entry far from where the touch happened) was
+actually caused by the wrong outer-band boundary, which is now fixed separately — bias is
+re-checked fresh at entry time regardless of touch age, so expiry isn't needed to guard against
+that specific failure mode anymore.
+
 ## Reference examples (from chart screenshots, 2026-08-19)
 
 - **Valid long example** (2nd screenshot, Micro Gold Futures, 1m): 200 MA below MRC, candle

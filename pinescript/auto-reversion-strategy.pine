@@ -73,8 +73,8 @@ qqeFactor = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group =
 
 grpRisk = "Risk / Exit"
 stopTicks       = input.float(75, "Stop loss (ticks)", minval = 1, group = grpRisk)
-cooldownBars    = input.int(10, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
-touchExpiryBars = input.int(20, "Touch expires after this many bars with no signal", minval = 1, group = grpRisk)
+cooldownBars    = input.int(0, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
+touchExpiryBars = input.int(100000, "Touch expires after this many bars with no signal", minval = 1, group = grpRisk)
 biasConfirmBars = input.int(3, "Bias must hold for this many consecutive bars", minval = 1, group = grpRisk)
 
 grpColor = "Colors"
@@ -251,12 +251,12 @@ qqeShortSignal = qqeCrossDown and barstate.isconfirmed
 
 // ---------------------------------------------------------------------------
 // Cooldown — blocks a brand-new entry for N bars after a position closes.
-// Without this, a choppy stretch right at the band edge can whipsaw into
-// several trades back-to-back (touch -> signal -> quick stop/target ->
-// re-touch -> new signal -> repeat), which is what produced the cluttered
-// stack of tiny +2/-2 trades on the chart. A signal that occurs during
-// cooldown is NOT consumed/wasted — the touch stays armed and waits for the
-// next fresh signal once the cooldown clears.
+// 2026-08-20: DEFAULTS TO 0 (off) per trader's explicit preference — enter
+// immediately the moment conditions are met, every time, no exceptions.
+// Was added earlier at 10 bars to stop whipsaw trade clustering, but that's
+// a deliberate tradeoff (fewer, cleaner trades vs. taking every valid
+// signal) that's the trader's call, not something to impose by default.
+// Still here as a tunable input if wanted later.
 // ---------------------------------------------------------------------------
 var int barsSinceFlat = 999999
 var float prevPosSizeForCooldown = 0.0
@@ -270,15 +270,15 @@ if barstate.isconfirmed
 cooldownOk = barsSinceFlat >= cooldownBars
 
 // ---------------------------------------------------------------------------
-// Setup — touch is remembered for a LIMITED window, not same-bar and not
-// forever. Once price touches the outer band, the next QQE long/short
-// signal within touchExpiryBars still counts, even if it's several bars
-// later. But it DOES expire — 2026-08-20: an earlier version let the touch
-// stay armed indefinitely, which meant a signal firing much later, after
-// price had already drifted far from the band, would still fire an entry
-// nowhere near where the touch happened. This is the middle ground between
-// that (too loose) and resetting on any single-bar bias flicker (too
-// strict — see the earlier bug this replaced).
+// Setup — touch is remembered, not same-bar. Once price touches the outer
+// band, the next QQE long/short signal counts whenever it comes.
+// touchExpiryBars defaults effectively unlimited (2026-08-20, trader's
+// explicit preference — an old touch is fine, don't expire it) rather than
+// the earlier 20-bar window. The earlier concern (a stale touch firing an
+// entry far from where the touch happened) was actually caused by the
+// wrong outer-band boundary, now fixed separately — bias is correctly
+// re-checked fresh at entry time regardless of how old the touch is, so
+// expiry isn't needed to prevent that specific problem anymore.
 // ---------------------------------------------------------------------------
 var bool touchedLower = false
 var bool touchedUpper = false
