@@ -128,6 +128,17 @@ above still exists in this restored version (it predates that fix) — left as-i
 revert request, not silently reapplied; flagged in case the trader wants that specific fix layered
 back on top of this version once behavior here is confirmed good.
 
+**2026-08-20, merged:** trader clarified the ask — keep the golden version's entry/signal logic
+exactly as-is (that's what was taking trades correctly), but layer the TPT session rule, the fixed-
+tick stop, and the inner-band TP from the later draft on top of it. Not a rewrite of WHEN a signal
+fires — `qqeLong`/`qqeShort` are byte-for-byte the same condition as the golden version
+(`maBelowOuter`/`maAboveOuter` + `priceInGapShort`/`priceInGapLong`, same-bar check, no touch
+memory), with exactly one addition: `allowNewTrade` (the TPT pre-close buffer) ANDed in. Everything
+downstream of a signal firing — TP/SL tracking, the TPT force-flatten at the deadline — is the
+trader's own TPT-draft code, also unchanged. Left out of the merge: the enable/disable filter
+toggles and the Inner/Outer `gapFilterBand` selector from the TPT draft (not part of what was asked
+for — "session rules, new SL, new TP" — easy to add back if wanted).
+
 **How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →
 Add to Chart. Hand-written, not yet run through TradingView's compiler — send me the exact error
 text if it throws one on first load.
