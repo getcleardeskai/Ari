@@ -122,6 +122,12 @@ edge (touch → signal → quick stop/target → re-touch → new signal → rep
 signal that occurs during cooldown isn't wasted — the touch stays armed and waits for the next
 fresh signal once the cooldown clears.
 
+**2026-08-20:** trader reported long/short entries came out entirely reversed. Fixed by swapping
+which setup routes to which direction — the lower-band-touch setup now triggers a short, the
+upper-band-touch setup now triggers a long (same underlying conditions, just re-routed). Exits/
+targets/stops needed no change since they key off actual position direction
+(`strategy.position_size`), not which setup fired.
+
 The diagnostic funnel table and rule toggles from the debugging phase were removed from the
 script now that the ruleset is settled — they did their job (found the real bugs) and would just
 be clutter now. Can be added back if useful once shorts/volume are reintroduced.

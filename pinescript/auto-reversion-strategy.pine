@@ -257,13 +257,20 @@ if barstate.isconfirmed
     if high >= upper2
         touchedUpper := true
 
+// NOTE 2026-08-20: long/short deliberately swapped here per trader report
+// that entries were coming out reversed — the "lower band touch + bullish-
+// looking setup" condition below now triggers a SHORT, and the "upper band
+// touch" condition triggers a LONG. If this was actually correct before and
+// the mix-up was elsewhere (e.g. just eyeballing the chart), say so and
+// this swap gets reverted — but taken at face value, this is the minimal
+// fix: same conditions, entries routed to the opposite direction.
 doLongEntry  = false
 doShortEntry = false
 if barstate.isconfirmed and biasLongOk and touchedLower and qqeLongSignal and cooldownOk
-    doLongEntry := true
+    doShortEntry := true
     touchedLower := false   // consumed
 if barstate.isconfirmed and biasShortOk and touchedUpper and qqeShortSignal and cooldownOk
-    doShortEntry := true
+    doLongEntry := true
     touchedUpper := false   // consumed
 
 // ---------------------------------------------------------------------------
