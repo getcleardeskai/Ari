@@ -214,6 +214,16 @@ actually caused by the wrong outer-band boundary, which is now fixed separately 
 re-checked fresh at entry time regardless of touch age, so expiry isn't needed to guard against
 that specific failure mode anymore.
 
+**2026-08-20, root cause of that anyway:** trader caught it happening live — a Short fired in the
+middle of a declining channel, nowhere near the top band. Cause: with expiry effectively removed,
+a touch from way earlier (possibly off-screen) stayed armed indefinitely and got consumed by an
+unrelated later signal. Trader's own fix suggestion, adopted: replace the whole persistent-flag
+design with a small fixed lookback — `touchLookbackBars` (default 3), using `ta.barssince()` to
+check whether the touch happened within the last few bars, recomputed fresh every bar with no
+state to track or consume. Much simpler code and directly prevents this failure mode by
+construction (a touch that old is just no longer "recent" the moment it's more than a few bars
+back, no separate expiry logic needed).
+
 ## Reference examples (from chart screenshots, 2026-08-19)
 
 - **Valid long example** (2nd screenshot, Micro Gold Futures, 1m): 200 MA below MRC, candle

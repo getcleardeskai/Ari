@@ -15,9 +15,11 @@
 //              count even when clearly surrounded by bars on the other
 //              side).
 //   2. TOUCH : price has touched the true outer band (the far edge of the
-//              gradient zone) at some point while that bias holds.
-//              Persistent, not same-bar — the touch and the signal do NOT
-//              need to happen on the same candle.
+//              gradient zone) within the last touchLookbackBars bars
+//              (default 3) — the touch and the signal don't need to be the
+//              same candle, but it has to be recent, not any time in the
+//              past (2026-08-20, simplified from an earlier persistent-flag
+//              design that could fire on a touch from way earlier).
 //   3. SIGNAL: once touched, wait (however long it takes) for a QQE
 //              long/short signal. It does not need to print while price is
 //              still inside/touching the band — only that a touch happened
@@ -72,9 +74,9 @@ rsiSmooth = input.int(5, "RSI smoothing (EMA)", minval = 1, group = grpQQE)
 qqeFactor = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group = grpQQE)
 
 grpRisk = "Risk / Exit"
-stopTicks       = input.float(75, "Stop loss (ticks)", minval = 1, group = grpRisk)
-cooldownBars    = input.int(0, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
-touchExpiryBars = input.int(100000, "Touch expires after this many bars with no signal", minval = 1, group = grpRisk)
+stopTicks        = input.float(75, "Stop loss (ticks)", minval = 1, group = grpRisk)
+cooldownBars     = input.int(0, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
+touchLookbackBars = input.int(3, "Touch must have happened within this many bars", minval = 0, group = grpRisk)
 biasConfirmBars = input.int(3, "Bias must hold for this many consecutive bars", minval = 1, group = grpRisk)
 
 grpColor = "Colors"
@@ -270,46 +272,26 @@ if barstate.isconfirmed
 cooldownOk = barsSinceFlat >= cooldownBars
 
 // ---------------------------------------------------------------------------
-// Setup — touch is remembered, not same-bar. Once price touches the outer
-// band, the next QQE long/short signal counts whenever it comes.
-// touchExpiryBars defaults effectively unlimited (2026-08-20, trader's
-// explicit preference — an old touch is fine, don't expire it) rather than
-// the earlier 20-bar window. The earlier concern (a stale touch firing an
-// entry far from where the touch happened) was actually caused by the
-// wrong outer-band boundary, now fixed separately — bias is correctly
-// re-checked fresh at entry time regardless of how old the touch is, so
-// expiry isn't needed to prevent that specific problem anymore.
+// Setup — 2026-08-20, simplified: instead of a persistent "touched" flag
+// that can live forever (and fire on a touch from way earlier, far from
+// where price currently is — see the "why does it go short in the middle"
+// case), just look back a small fixed window. At the moment of a signal,
+// check whether price touched the outer band within the last
+// touchLookbackBars bars (0 = same bar only). No state to track/consume —
+// recomputed fresh every bar with ta.barssince.
 // ---------------------------------------------------------------------------
-var bool touchedLower = false
-var bool touchedUpper = false
-var int  barsSinceTouchLower = 999999
-var int  barsSinceTouchUpper = 999999
+barsSinceTouchLower = ta.barssince(low <= lower2_1)
+barsSinceTouchUpper = ta.barssince(high >= upper2_1)
 
-if barstate.isconfirmed
-    if low <= lower2_1
-        touchedLower := true
-        barsSinceTouchLower := 0
-    else if touchedLower
-        barsSinceTouchLower += 1
-        if barsSinceTouchLower > touchExpiryBars
-            touchedLower := false
-
-    if high >= upper2_1
-        touchedUpper := true
-        barsSinceTouchUpper := 0
-    else if touchedUpper
-        barsSinceTouchUpper += 1
-        if barsSinceTouchUpper > touchExpiryBars
-            touchedUpper := false
+touchedLowerRecent = not na(barsSinceTouchLower) and barsSinceTouchLower <= touchLookbackBars
+touchedUpperRecent = not na(barsSinceTouchUpper) and barsSinceTouchUpper <= touchLookbackBars
 
 doLongEntry  = false
 doShortEntry = false
-if barstate.isconfirmed and biasLongConfirmed and touchedLower and qqeLongSignal and cooldownOk
+if barstate.isconfirmed and biasLongConfirmed and touchedLowerRecent and qqeLongSignal and cooldownOk
     doLongEntry := true
-    touchedLower := false   // consumed
-if barstate.isconfirmed and biasShortConfirmed and touchedUpper and qqeShortSignal and cooldownOk
+if barstate.isconfirmed and biasShortConfirmed and touchedUpperRecent and qqeShortSignal and cooldownOk
     doShortEntry := true
-    touchedUpper := false   // consumed
 
 // ---------------------------------------------------------------------------
 // Entries (no re-entry: pyramiding=0 + explicit position check)
