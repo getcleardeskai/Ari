@@ -44,6 +44,19 @@
 // No painting (barstate.isconfirmed gating) and no re-entries (pyramiding=0
 // + position-size checks), same pattern as trend-bias-qqe-strategy.pine.
 //
+// 2026-08-20: merged in visual/toggle ideas from an alternative draft the
+// trader wrote independently (useStop/useMrcTarget exit toggles,
+// showEntries/showSetup/showBias/showQqeDots display toggles, "armed"
+// circle markers, QQE debug dots). Two things from that draft were
+// deliberately NOT carried over: (1) its ARM/CANCEL logic ran without
+// barstate.isconfirmed gating, unlike everything else in this file — a
+// repaint risk; (2) its CANCEL block reset the armed state the instant
+// bias flickered false for one bar, which is exactly the "missed trades"
+// bug already found and removed earlier (see the touch/setup section
+// below). The "armed" marker here is computed fresh every bar straight
+// from the same stateless bias/touch booleans the entry logic already
+// uses — no separate state variable, so there's nothing to wrongly reset.
+//
 // Hand-written, not run through TradingView's compiler on my end — if it
 // throws an error on first load, send the exact error text.
 // ============================================================================
@@ -74,7 +87,9 @@ rsiSmooth = input.int(5, "RSI smoothing (EMA)", minval = 1, group = grpQQE)
 qqeFactor = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group = grpQQE)
 
 grpRisk = "Risk / Exit"
+useStop          = input.bool(true, "Use stop loss", group = grpRisk)
 stopTicks        = input.float(75, "Stop loss (ticks)", minval = 1, group = grpRisk)
+useMrcTarget     = input.bool(true, "Use MRC inner-band take-profit", group = grpRisk)
 cooldownBars     = input.int(0, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
 touchLookbackBars = input.int(3, "Touch must have happened within this many bars", minval = 0, group = grpRisk)
 biasConfirmBars = input.int(3, "Bias must hold for this many consecutive bars", minval = 1, group = grpRisk)
@@ -82,6 +97,12 @@ biasConfirmBars = input.int(3, "Bias must hold for this many consecutive bars", 
 grpColor = "Colors"
 colBull = input.color(#089981, "Bullish color", group = grpColor)
 colBear = input.color(#f23645, "Bearish color", group = grpColor)
+
+grpVisual = "Visuals"
+showEntries = input.bool(true, "Show entry arrows", group = grpVisual)
+showSetup   = input.bool(true, "Show armed/touch markers", group = grpVisual)
+showBias    = input.bool(true, "Show bias MA line", group = grpVisual)
+showQqeDots = input.bool(false, "Show QQE signal dots (debug)", group = grpVisual)
 
 tick = syminfo.mintick
 
@@ -198,7 +219,7 @@ fill(pl8, pl9, color = showZone ? zColor8 : na)
 // line, matching "not touching even the outer bands" literally.
 // ---------------------------------------------------------------------------
 maVal = maType == "SMMA" ? ta.rma(close, maLen) : ta.sma(close, maLen)
-plot(maVal, "Bias MA", color = color.new(color.white, 0), linewidth = 2)
+plot(showBias ? maVal : na, "Bias MA", color = color.new(color.white, 0), linewidth = 2)
 
 biasLongOk  = maVal < lower2_1
 biasShortOk = maVal > upper2_1
@@ -251,6 +272,12 @@ qqeCrossDown = qqeXShortCount == 1
 qqeLongSignal  = qqeCrossUp   and barstate.isconfirmed
 qqeShortSignal = qqeCrossDown and barstate.isconfirmed
 
+// Debug dots — raw QQE signal, independent of bias/touch, so a "why didn't
+// it enter" question can be answered by eye: signal fired but bias/touch
+// didn't line up, vs. signal never fired at all.
+plotshape(showQqeDots and qqeLongSignal,  style = shape.circle, location = location.belowbar, color = color.new(colBull, 30), size = size.tiny, title = "QQE Long Signal (debug)")
+plotshape(showQqeDots and qqeShortSignal, style = shape.circle, location = location.abovebar, color = color.new(colBear, 30), size = size.tiny, title = "QQE Short Signal (debug)")
+
 // ---------------------------------------------------------------------------
 // Cooldown — blocks a brand-new entry for N bars after a position closes.
 // 2026-08-20: DEFAULTS TO 0 (off) per trader's explicit preference — enter
@@ -293,6 +320,19 @@ if barstate.isconfirmed and biasLongConfirmed and touchedLowerRecent and qqeLong
 if barstate.isconfirmed and biasShortConfirmed and touchedUpperRecent and qqeShortSignal and cooldownOk
     doShortEntry := true
 
+// "Armed" visual — bias + recent touch already satisfied, just waiting on
+// the QQE signal to actually fire. Purely derived from the same
+// stateless booleans above (no new longArmed/shortArmed state variable) so
+// there's nothing to accidentally reset on a bias flicker — that was the
+// bug in the trader's draft: a persistent armed flag that got cancelled the
+// instant bias ticked false for one bar, which is exactly the "missed
+// trades" pattern already fixed once by moving to ta.barssince. This is
+// display-only and plays no part in the entry logic itself.
+longArmedNow  = biasLongConfirmed  and touchedLowerRecent and strategy.position_size <= 0
+shortArmedNow = biasShortConfirmed and touchedUpperRecent and strategy.position_size >= 0
+plotshape(showSetup and longArmedNow  and not doLongEntry,  style = shape.circle, location = location.belowbar, color = color.new(colBull, 60), size = size.tiny, title = "Armed (long)")
+plotshape(showSetup and shortArmedNow and not doShortEntry, style = shape.circle, location = location.abovebar, color = color.new(colBear, 60), size = size.tiny, title = "Armed (short)")
+
 // ---------------------------------------------------------------------------
 // Entries (no re-entry: pyramiding=0 + explicit position check)
 // ---------------------------------------------------------------------------
@@ -305,10 +345,11 @@ if shortCondition
     strategy.entry("Short", strategy.short)
 
 // Stop stays fast/intrabar — a stop-loss firing quickly is correct, it's
-// there to cap damage the moment price moves against you.
-if strategy.position_size > 0
+// there to cap damage the moment price moves against you. useStop lets it
+// be disabled entirely (e.g. testing MRC-target-only exits).
+if useStop and strategy.position_size > 0
     strategy.exit("Long Stop", "Long", stop = strategy.position_avg_price - stopTicks * tick)
-if strategy.position_size < 0
+if useStop and strategy.position_size < 0
     strategy.exit("Short Stop", "Short", stop = strategy.position_avg_price + stopTicks * tick)
 
 // Take-profit, by contrast, now requires a CONFIRMED CANDLE CLOSE beyond
@@ -316,13 +357,14 @@ if strategy.position_size < 0
 // wick touching it. 2026-08-20: a live limit order was firing on brief
 // spikes that immediately reversed ("selling a bit early" right as the
 // real move started) — this waits for the close to actually confirm it.
-if barstate.isconfirmed and strategy.position_size > 0 and close >= upper1
+// useMrcTarget lets it be disabled entirely (e.g. stop-only testing).
+if useMrcTarget and barstate.isconfirmed and strategy.position_size > 0 and close >= upper1
     strategy.close("Long", comment = "TP (confirmed close)")
-if barstate.isconfirmed and strategy.position_size < 0 and close <= lower1
+if useMrcTarget and barstate.isconfirmed and strategy.position_size < 0 and close <= lower1
     strategy.close("Short", comment = "TP (confirmed close)")
 
-plotshape(longCondition, style = shape.triangleup, location = location.belowbar, color = colBull, size = size.small, title = "Long Entry")
-plotshape(shortCondition, style = shape.triangledown, location = location.abovebar, color = colBear, size = size.small, title = "Short Entry")
+plotshape(showEntries and longCondition, style = shape.triangleup, location = location.belowbar, color = colBull, size = size.small, title = "Long Entry")
+plotshape(showEntries and shortCondition, style = shape.triangledown, location = location.abovebar, color = colBear, size = size.small, title = "Short Entry")
 
 alertcondition(longCondition, "Auto Reversion Long", "{{ticker}} Auto Reversion long entry @ {{close}}")
 alertcondition(shortCondition, "Auto Reversion Short", "{{ticker}} Auto Reversion short entry @ {{close}}")

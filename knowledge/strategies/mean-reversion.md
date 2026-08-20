@@ -224,6 +224,27 @@ state to track or consume. Much simpler code and directly prevents this failure 
 construction (a touch that old is just no longer "recent" the moment it's more than a few bars
 back, no separate expiry logic needed).
 
+**2026-08-20, merge with trader's independent draft:** trader wrote a full alternative version of
+this script separately ("tried to make this and it failed") using an explicit `longArmed`/
+`shortArmed` state-machine design (ARM on touch+bias, CANCEL if bias breaks) plus several toggles
+and debug visuals. Reviewed it and found two real bugs rather than debugging that version further:
+1. Its ARM and CANCEL blocks ran with no `barstate.isconfirmed` gate, unlike every other condition
+   in either script — a repaint risk (armed/cancelled state could flip intrabar and un-happen).
+2. Its CANCEL block reset the armed flag the instant bias ticked false for even one bar — this is
+   exactly the "missed trades" bug already found and removed from this file earlier (see the
+   2026-08-20 entries above about the persistent touch flag and the barssince redesign). It was
+   also redundant: the entry condition already re-checks bias fresh at signal time, so a stale arm
+   flag can't fire a bad trade on its own.
+
+Rather than carry those over, merged the good parts of the draft into the known-good core logic
+here: `useStop` / `useMrcTarget` toggles (independently disable either exit for testing),
+`showEntries` / `showSetup` / `showBias` / `showQqeDots` display toggles, small "armed" circle
+markers, and QQE debug dot markers. The armed markers are computed fresh every bar directly from
+the existing stateless `biasLongConfirmed`/`touchedLowerRecent` (etc.) booleans — no new
+`longArmed`/`shortArmed` state variable — so there's nothing to wrongly reset on a bias flicker.
+Core entry/exit logic (bias streak, barssince touch lookback, confirmed-close TP, intrabar stop)
+is unchanged.
+
 ## Reference examples (from chart screenshots, 2026-08-19)
 
 - **Valid long example** (2nd screenshot, Micro Gold Futures, 1m): 200 MA below MRC, candle
