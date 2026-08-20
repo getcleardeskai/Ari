@@ -148,6 +148,17 @@ even as the live TP (and thus the R:R) moves afterward. Entry/signal logic (`qqe
 `maBelowOuter`/`maAboveOuter` + `priceInGapShort`/`priceInGapLong`) and the TPT session rule are
 unchanged from the merged version above.
 
+**2026-08-20, configurable ratio + trailing SL:** trader asked to change the fixed 1:1 SL to a
+configurable ratio (`slRatio`, default 0.7 — SL distance = 0.7x the TP distance at entry) and to
+have the SL trail the TP's own movement afterward instead of staying frozen: `slTrailSpeed` (default
+0.5) — for however many points the TP has moved from its entry-time value, the SL moves
+`slTrailSpeed` x that many points from ITS entry-time value, in the same direction. New state vars
+`initialTPTracked`/`initialSLTracked` snapshot both at entry so the live trail has a fixed reference
+point to measure movement from. Not a ratchet, matching the earlier "stop follows the band" design
+in this file's history: if the TP band gives back ground, the SL follows it back too, proportionally
+— same live-tracking philosophy as the TP itself, just at half speed by default and applied to the
+SL's own starting point rather than the band directly.
+
 **How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →
 Add to Chart. Hand-written, not yet run through TradingView's compiler — send me the exact error
 text if it throws one on first load.
@@ -166,6 +177,12 @@ already show. `process_orders_on_close = true` so entries fill at the signal bar
 direction signal reverses the position — matching the indicator's own manual tracking, which always
 let a fresh signal overwrite the tracked state regardless of what was currently held. The TPT
 deadline force-flattens via `strategy.close_all()` in addition to resetting the manual state.
+
+**2026-08-20, configurable ratio + trailing SL:** same change as the indicator above, ported
+identically — `slRatio`/`slTrailSpeed` inputs, `initialTPTracked`/`initialSLTracked` state, SL now
+trails the TP's movement at `slTrailSpeed` instead of staying frozen at its entry-time value. The
+real `strategy.exit()` calls already read `slLevel` live each bar, so they automatically pick up the
+trailing value — no separate change needed there.
 
 **How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →
 Add to Chart → Strategy Tester tab for backtest results. Hand-written, not yet run through

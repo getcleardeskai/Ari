@@ -15,13 +15,19 @@
 // TP follows the selected MRC band live.
 //
 // SL:
-//   Fixed 1:1 risk/reward based on the TP distance from entry at entry time.
-//   Example:
+//   Initial size = slRatio (default 0.7) x the TP distance from entry at
+//   entry time. Example, slRatio = 0.7:
 //      Long entry 7000
-//      TP at entry 7010
-//      SL = 6990
+//      TP at entry 7010 (10-point distance)
+//      SL = 7000 - (10 x 0.7) = 6993
 //
-//   The TP can move afterward, but the SL remains fixed.
+//   After entry, the SL TRAILS the TP's own movement, at slTrailSpeed
+//   (default 0.5, i.e. half speed) of however far the TP has moved from
+//   its entry-time value — same mechanism as the TP following its band,
+//   just scaled down and applied to the SL's starting point instead.
+//   Example: TP moves up 10 points from where it was at entry -> SL moves
+//   up 10 x 0.5 = 5 points from where IT was at entry. Not a ratchet: if
+//   the TP band gives back ground, the SL gives back proportionally too.
 //
 // TPT:
 //   Full futures session allowed.
@@ -168,6 +174,18 @@ grpRisk = "Risk / Stop Loss"
 showSL = input.bool(
      true,
      "Show stop level",
+     group = grpRisk)
+
+slRatio = input.float(
+     0.7,
+     "Initial SL size (x the TP distance at entry)",
+     minval = 0.01,
+     group = grpRisk)
+
+slTrailSpeed = input.float(
+     0.5,
+     "SL trail speed (x the TP's own movement since entry)",
+     minval = 0.0,
      group = grpRisk)
 
 tickOverride = input.float(
@@ -519,7 +537,7 @@ qqeShort =
 
 
 // ============================================================================
-// TP + 1:1 STOP TRACKING
+// TP + TRAILING STOP TRACKING
 // ============================================================================
 //
 // IMPORTANT:
@@ -536,18 +554,20 @@ qqeShort =
 //
 // Once selected, that band is followed LIVE.
 //
-// The SL is calculated ONCE at entry using the distance from entry
-// to the TP at that moment.
+// The SL's INITIAL size is calculated ONCE at entry, as slRatio x the
+// distance from entry to the TP at that moment:
 //
-// Example:
-//
-// LONG:
+// LONG example (slRatio = 0.7):
 // Entry = 7000
-// Initial TP = 7010
-// Risk = 10 points
-// SL = 6990
+// Initial TP = 7010 (10-point distance)
+// SL = 7000 - (10 x 0.7) = 6993
 //
-// Even if R2 later moves to 7020, SL remains 6990.
+// After that, the SL TRAILS the TP's own movement (not price directly) at
+// slTrailSpeed — `initialTPTracked`/`initialSLTracked` remember the
+// entry-time TP and SL, and every bar the live SL is recomputed as the
+// entry-time SL plus slTrailSpeed x however far the TP has moved since
+// entry. Not a ratchet: if the TP band gives back ground, the SL follows
+// it back too, proportionally.
 // ============================================================================
 
 var int qqeDir = 0
@@ -555,6 +575,10 @@ var int qqeDir = 0
 var float entryPriceTracked = na
 var float slLevel = na
 var float tpLevel = na
+
+// Entry-time snapshots the trailing SL is computed relative to.
+var float initialTPTracked = na
+var float initialSLTracked = na
 
 // 1 = inner TP
 // 2 = outer TP
@@ -570,6 +594,8 @@ if tptCutoffReached
     entryPriceTracked := na
     slLevel := na
     tpLevel := na
+    initialTPTracked := na
+    initialSLTracked := na
     tpBand := 0
 
 
@@ -598,12 +624,15 @@ if not na(qqeLong) and not tptCutoffReached
          ? upperOuter
          : upperInner
 
-    // 1:1 risk.
-    riskDistance = math.abs(initialTP - entryPriceTracked)
+    // Initial risk = slRatio x the TP distance.
+    riskDistance = math.abs(initialTP - entryPriceTracked) * slRatio
 
     slLevel := entryPriceTracked - riskDistance
 
     tpLevel := initialTP
+
+    initialTPTracked := initialTP
+    initialSLTracked := slLevel
 
 
 // ============================================================================
@@ -631,16 +660,19 @@ if not na(qqeShort) and not tptCutoffReached
          ? lowerOuter
          : lowerInner
 
-    // 1:1 risk.
-    riskDistance = math.abs(entryPriceTracked - initialTP)
+    // Initial risk = slRatio x the TP distance.
+    riskDistance = math.abs(entryPriceTracked - initialTP) * slRatio
 
     slLevel := entryPriceTracked + riskDistance
 
     tpLevel := initialTP
 
+    initialTPTracked := initialTP
+    initialSLTracked := slLevel
+
 
 // ============================================================================
-// LIVE TP FOLLOWING
+// LIVE TP FOLLOWING + SL TRAILING
 // ============================================================================
 
 if qqeDir == 1
@@ -651,6 +683,9 @@ if qqeDir == 1
          ? upperOuter
          : upperInner
 
+    // SL trails at slTrailSpeed x however far TP has moved since entry.
+    slLevel := initialSLTracked + slTrailSpeed * (tpLevel - initialTPTracked)
+
 
 if qqeDir == -1
 
@@ -659,6 +694,10 @@ if qqeDir == -1
          tpBand == 2
          ? lowerOuter
          : lowerInner
+
+    // SL trails at slTrailSpeed x however far TP has moved since entry
+    // (favorable direction for a short is DOWN, so this is subtracted).
+    slLevel := initialSLTracked - slTrailSpeed * (initialTPTracked - tpLevel)
 
 
 // ============================================================================
@@ -673,6 +712,8 @@ if qqeDir == 1
         entryPriceTracked := na
         slLevel := na
         tpLevel := na
+        initialTPTracked := na
+        initialSLTracked := na
         tpBand := 0
 
     // SL
@@ -681,6 +722,8 @@ if qqeDir == 1
         entryPriceTracked := na
         slLevel := na
         tpLevel := na
+        initialTPTracked := na
+        initialSLTracked := na
         tpBand := 0
 
 
@@ -696,6 +739,8 @@ if qqeDir == -1
         entryPriceTracked := na
         slLevel := na
         tpLevel := na
+        initialTPTracked := na
+        initialSLTracked := na
         tpBand := 0
 
     // SL
@@ -704,6 +749,8 @@ if qqeDir == -1
         entryPriceTracked := na
         slLevel := na
         tpLevel := na
+        initialTPTracked := na
+        initialSLTracked := na
         tpBand := 0
 
 
