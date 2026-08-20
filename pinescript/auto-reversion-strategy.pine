@@ -14,11 +14,13 @@
 //              confirmed bars (a strict single-bar check let one noisy bar
 //              count even when clearly surrounded by bars on the other
 //              side).
-//   2. TOUCH : price has touched the true outer band (the far edge of the
-//              gradient zone) and hasn't crossed back through the mean line
+//   2. TOUCH : price has touched anywhere in the band's range (starting at
+//              the R2/S2 line, not needing to reach the deepest outer edge
+//              — that deepest edge is the BIAS boundary, not the touch
+//              boundary) and hasn't crossed back through the mean line
 //              since — the touch and the signal don't need to be the same
 //              candle, however many bars it takes, as long as it's still
-//              the same excursion out to the band (see 2026-08-20 note
+//              the same excursion out to the band (see 2026-08-20 notes
 //              below).
 //   3. SIGNAL: once touched, wait (however long it takes) for a QQE
 //              long/short signal. It does not need to print while price is
@@ -325,8 +327,15 @@ cooldownOk = barsSinceFlat >= cooldownBars
 // work now. Still fully stateless — ta.barssince on both conditions, no
 // flag to track or reset.
 // ---------------------------------------------------------------------------
-barsSinceTouchLower = ta.barssince(low <= lower2_1)
-barsSinceTouchUpper = ta.barssince(high >= upper2_1)
+// Touch fires on reaching ANY part of the band's range, starting at the
+// R2/S2 line (upper2/lower2) — not only the deepest outer edge
+// (upper2_1/lower2_1). 2026-08-20: was requiring the deepest edge, which
+// missed plenty of valid touches that only reached partway into the
+// shaded zone. Bias is intentionally different and unchanged — it still
+// requires the MA fully outside the WHOLE zone (upper2_1/lower2_1), per
+// "not touching even the outer bands."
+barsSinceTouchLower = ta.barssince(low <= lower2)
+barsSinceTouchUpper = ta.barssince(high >= upper2)
 
 barsSinceMeanCrossUp   = ta.barssince(ta.crossover(close, meanline))   // invalidates a lower-band touch (long setup spent)
 barsSinceMeanCrossDown = ta.barssince(ta.crossunder(close, meanline))  // invalidates an upper-band touch (short setup spent)

@@ -273,6 +273,16 @@ it the moment price actually reverts through the mean, which is what actually fa
 `touchLookbackBars` (500) is kept only as an outer safety cap; the mean-crossback check is what
 does the real work now. Still fully stateless — two more `ta.barssince()` calls, no new flag.
 
+**2026-08-20, touch boundary loosened to the R2/S2 line:** trader flagged that entries were only
+firing when price reached the deepest outer edge of the gradient zone (`upper2_1`/`lower2_1`),
+when touch should count anywhere price reaches into the band's range at all. Touch condition
+changed to `upper2`/`lower2` (the R2/S2 line — the near edge of the shaded zone) instead of the
+deepest edge. Bias is intentionally unchanged: it still requires the MA fully outside the WHOLE
+zone (`upper2_1`/`lower2_1`), per the earlier "the red BAND is the outermost band" correction —
+that correction was about bias, not touch. Touch and bias now use different boundaries on purpose:
+touch = entering the band at all (upper2/lower2), bias = the MA clearing the entire band
+(upper2_1/lower2_1).
+
 ## Reference examples (from chart screenshots, 2026-08-19)
 
 - **Valid long example** (2nd screenshot, Micro Gold Futures, 1m): 200 MA below MRC, candle
