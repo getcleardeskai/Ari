@@ -139,9 +139,37 @@ trader's own TPT-draft code, also unchanged. Left out of the merge: the enable/d
 toggles and the Inner/Outer `gapFilterBand` selector from the TPT draft (not part of what was asked
 for — "session rules, new SL, new TP" — easy to add back if wanted).
 
+**2026-08-20, TP-by-location + fixed 1:1 SL:** trader's next hand-written iteration, pasted in and
+saved as the file's current content. TP now depends on where price was relative to the MRC at the
+signal: R2/S2 (outer) if the signal fired outside the MRC, R1/S1 (inner) if inside — then follows
+that selected band live. SL changed from a flat tick count to a 1:1 risk/reward computed ONCE at
+entry from the initial TP distance (e.g. entry 7000, initial TP 7010 → SL 6990) and held fixed
+even as the live TP (and thus the R:R) moves afterward. Entry/signal logic (`qqeLong`/`qqeShort`,
+`maBelowOuter`/`maAboveOuter` + `priceInGapShort`/`priceInGapLong`) and the TPT session rule are
+unchanged from the merged version above.
+
 **How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →
 Add to Chart. Hand-written, not yet run through TradingView's compiler — send me the exact error
 text if it throws one on first load.
+
+## `mrc-200sma-qqe-strategy.pine` — strategy port of the indicator above
+
+Added 2026-08-20. Same entry/signal logic, TP-by-location selection, and fixed-1:1-SL math as
+`mrc-200sma-qqe-indicator.pine` (TP-by-location version) — nothing about *when* a signal fires or
+*what* TP/SL get computed to was changed. Converted to a backtestable `strategy()` following the
+same pattern already used in this repo for `gold-elephant-reversal-strategy.pine`: the original
+manual state tracking (`qqeDir`/`entryPriceTracked`/`slLevel`/`tpLevel`/`tpBand`) is kept exactly
+as-is and still drives the plots, with real `strategy.entry()`/`strategy.exit()` calls added
+alongside it, driven off those same variables, so backtest fills match what the indicator's plots
+already show. `process_orders_on_close = true` so entries fill at the signal bar's close (matching
+`entryPriceTracked := close`); `pyramiding = 0` blocks same-direction stacking, while an opposite-
+direction signal reverses the position — matching the indicator's own manual tracking, which always
+let a fresh signal overwrite the tracked state regardless of what was currently held. The TPT
+deadline force-flattens via `strategy.close_all()` in addition to resetting the manual state.
+
+**How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →
+Add to Chart → Strategy Tester tab for backtest results. Hand-written, not yet run through
+TradingView's compiler — send me the exact error text if it throws one on first load.
 
 ## `mrc-and-200ma-indicator.pine` — visual-only, MRC + 200 MA in one script
 

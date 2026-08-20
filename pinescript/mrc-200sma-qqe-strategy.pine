@@ -1,7 +1,16 @@
 //@version=6
 
 // ============================================================================
-// MRC (In/Out Bands) + 200 SMMA + QQE
+// MRC (In/Out Bands) + 200 SMMA + QQE — Strategy
+//
+// Strategy port of mrc-200sma-qqe-indicator.pine (the "TP by location +
+// fixed 1:1 SL" version). All signal logic, TP selection, and SL math are
+// UNCHANGED — same pattern as gold-elephant-reversal-strategy.pine in this
+// repo: the original manual state tracking (qqeDir/entryPriceTracked/
+// slLevel/tpLevel/tpBand) is kept exactly as-is and still drives the plots,
+// with real strategy.entry()/strategy.exit() calls added alongside it,
+// driven off the same variables, so backtest fills match what the
+// indicator was already showing.
 //
 // TP:
 //   If signal fires OUTSIDE MRC:
@@ -26,10 +35,23 @@
 // TPT:
 //   Full futures session allowed.
 //   New trades blocked during the final minutes before TPT cutoff.
-//   Tracked trade is cleared at cutoff.
+//   Any open position is force-closed at the cutoff.
+//
+// No re-entry guard beyond what strategy.entry() gives for free: a new
+// signal in the SAME direction as an open position is a no-op (pyramiding
+// = 0), a new signal in the OPPOSITE direction reverses the position —
+// matching the original indicator's manual tracking, which always let a
+// fresh signal overwrite the tracked state regardless of the current one.
+//
+// Hand-written, not run through TradingView's compiler on my end — if it
+// throws an error on first load, send the exact error text.
 // ============================================================================
 
-indicator("MRC (In/Out Bands) + 200 SMMA + QQE", overlay = true, max_lines_count = 500)
+strategy("MRC (In/Out Bands) + 200 SMMA + QQE", overlay = true, pyramiding = 0,
+     default_qty_type = strategy.percent_of_equity, default_qty_value = 10,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.5,
+     slippage = 1, calc_on_every_tick = false, process_orders_on_close = true,
+     max_lines_count = 500)
 
 
 // ============================================================================
@@ -550,6 +572,8 @@ qqeShort =
 // Even if R2 later moves to 7020, SL remains 6990.
 // ============================================================================
 
+tick = tickOverride > 0 ? tickOverride : syminfo.mintick
+
 var int qqeDir = 0
 
 var float entryPriceTracked = na
@@ -566,6 +590,8 @@ var int tpBand = 0
 // ============================================================================
 
 if tptCutoffReached
+    if strategy.position_size != 0
+        strategy.close_all(comment = "TPT cutoff")
     qqeDir := 0
     entryPriceTracked := na
     slLevel := na
@@ -578,6 +604,8 @@ if tptCutoffReached
 // ============================================================================
 
 if not na(qqeLong) and not tptCutoffReached
+
+    strategy.entry("Long", strategy.long)
 
     qqeDir := 1
 
@@ -611,6 +639,8 @@ if not na(qqeLong) and not tptCutoffReached
 // ============================================================================
 
 if not na(qqeShort) and not tptCutoffReached
+
+    strategy.entry("Short", strategy.short)
 
     qqeDir := -1
 
@@ -662,7 +692,21 @@ if qqeDir == -1
 
 
 // ============================================================================
-// LONG TP / SL
+// REAL EXIT ORDERS — driven off the same slLevel/tpLevel the manual
+// tracking above already computed, so the backtest fills match what the
+// TP/SL plots show.
+// ============================================================================
+
+if strategy.position_size > 0
+    strategy.exit("Long Exit", "Long", stop = slLevel, limit = tpLevel)
+
+if strategy.position_size < 0
+    strategy.exit("Short Exit", "Short", stop = slLevel, limit = tpLevel)
+
+
+// ============================================================================
+// LONG TP / SL (manual tracking — mirrors the exit orders above so the
+// plots/state clear in sync with an actual fill)
 // ============================================================================
 
 if qqeDir == 1
