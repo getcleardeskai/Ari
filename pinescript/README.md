@@ -76,6 +76,22 @@ above for the main "just show me everything clearly" goal, but the clustering ap
 useful again later (e.g. as a "hot zone" overlay once individual confluences are trusted). Same
 single-timeframe/3-zone-type limitations as before — see the file's own header comment.
 
+## `gold-elephant-reversal-strategy.pine` — separate Gold strategy
+
+Added 2026-08-20. Not part of the two-strategy NQ/MNQ plan above — a separate 5-minute Gold
+reversal **strategy** the trader built independently ("elephant bar" reversal: a large, dominant-
+body candle followed by a confirmation candle closing back through its body/range, filtered by a
+20/200 SMA pair). Converted from an indicator (which tracked a manual win/loss array and its own
+on-chart stats table) into a `strategy()` script by adding real `strategy.entry()`/
+`strategy.exit()` calls alongside the original manual tracking — both run in parallel on the same
+signals, so it now also shows up in TradingView's Strategy Tester (List of Trades, Performance
+Summary) in addition to the original custom table. All signal/pattern logic is unchanged from the
+trader's own tested version.
+
+**How to use it:** TradingView → Gold chart, 5m → Pine Editor → paste this file's contents → Add
+to Chart → Strategy Tester tab for the native backtest stats, or just watch the on-chart table
+(same as the original indicator).
+
 ## `basic-trend-strategy.pine` — first scaffold, kept for reference
 
 The very first script (2026-08-19) — a simple EMA-crossover trend-following **strategy** (not an

@@ -1,0 +1,464 @@
+//@version=5
+// ============================================================================
+// 5 Min Gold Elephant-Bar Reversal Strategy
+//
+// Converted from the trader's indicator ("5 Min Gold Reversal Signals +
+// Winrate Table") into a strategy() script, 2026-08-20. Signal logic,
+// elephant-bar detection, trade-level math, and the custom stats table are
+// all UNCHANGED from the original — this only adds real strategy.entry()/
+// strategy.exit() calls alongside the existing manual position tracking, so
+// it also runs in TradingView's Strategy Tester (List of Trades,
+// Performance Summary, equity curve) in addition to the original on-chart
+// table. The manual tracking is kept as-is since it's the trader's own
+// tested win-rate logic (fixed lookback window, PnL in price and ticks).
+//
+// Not part of the two-strategy plan in ../knowledge/automation-architecture.md
+// (that's Trend Following + Auto Reversion on NQ/MNQ) — this is a separate,
+// unrelated Gold reversal pattern the trader built independently. Kept here
+// since it's Pine Script for the same account, but not cross-referenced with
+// the other strategy docs.
+// ============================================================================
+strategy("5 Min Gold Elephant-Bar Reversal Strategy", overlay = true,
+     max_labels_count = 500, max_lines_count = 500,
+     pyramiding = 0, default_qty_type = strategy.percent_of_equity, default_qty_value = 10,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.5,
+     slippage = 1, calc_on_every_tick = false)
+
+//====================================================
+// INPUTS
+//====================================================
+groupMA    = "Moving Averages"
+groupEle   = "Elephant Bar"
+groupRisk  = "Risk / TP"
+
+smaFastLen = input.int(20, "SMA Fast", minval=1, group=groupMA)
+smaSlowLen = input.int(200, "SMA Slow", minval=2, group=groupMA)
+
+eleLookback = input.int(4, "Elephant lookback bars", minval=2, maxval=50, group=groupEle)
+eleMult     = input.float(1.1, "Elephant range multiplier", minval=0.5, step=0.1, group=groupEle)
+minBodyPct  = input.float(15.0, "Min body % of range", minval=1, maxval=100, step=1, group=groupEle)
+
+bufferMode    = input.string("Price", "SL buffer mode", options=["Ticks", "Price"], group=groupRisk)
+slBufferValue = input.float(0.5, "SL buffer value", minval=0.0, step=0.1, group=groupRisk)
+tpMode        = input.string("1R", "TP mode", options=["1R", "1.5R", "2R", "Custom"], group=groupRisk)
+customTpR     = input.float(1.0, "Custom TP multiple of R", minval=0.1, step=0.1, group=groupRisk)
+
+//====================================================
+// FIXED SETTINGS BASED ON YOUR TESTED VERSION
+//====================================================
+bool showStatsTable      = true
+bool showSignalLabels    = true
+bool showEntrySLTPLines  = true
+bool showExitMarks       = true
+bool showDebug           = false
+
+int statsLookbackBars    = 5000
+string tablePosition     = "Top Right"
+
+bool useWickFilter                 = false
+float maxUpperWickPct              = 35.0
+float maxLowerWickPct              = 35.0
+bool requireSecondBarElephant      = false
+bool useFullCandleEngulf           = false
+bool useBodyEngulf                 = false
+bool useCloseBeyondBody            = true
+bool requireExtremeSweepForCloseMode = false
+bool useConfirmBodyRatio           = false
+float confirmBodyRatio             = 1.0
+bool enableContextFilter           = false
+bool oneTradeAtATime               = true
+
+//====================================================
+// HELPERS
+//====================================================
+f_table_pos(_pos) =>
+    _pos == "Top Right" ? position.top_right :
+     _pos == "Top Left" ? position.top_left :
+     _pos == "Bottom Right" ? position.bottom_right :
+     position.bottom_left
+
+f_tp_mult(_mode, _custom) =>
+    _mode == "1R" ? 1.0 :
+     _mode == "1.5R" ? 1.5 :
+     _mode == "2R" ? 2.0 :
+     _custom
+
+//====================================================
+// CORE SERIES
+//====================================================
+float sma20  = ta.sma(close, smaFastLen)
+float sma200 = ta.sma(close, smaSlowLen)
+float tpMult = f_tp_mult(tpMode, customTpR)
+
+plot(sma20,  "SMA Fast", color=color.orange, linewidth=2)
+plot(sma200, "SMA Slow", color=color.blue, linewidth=2)
+
+//====================================================
+// CANDLE METRICS
+//====================================================
+float rng  = high - low
+float body = math.abs(close - open)
+
+float upperWick = high - math.max(open, close)
+float lowerWick = math.min(open, close) - low
+
+float bodyPct      = rng > 0 ? (body / rng) * 100.0 : 0.0
+float upperWickPct = rng > 0 ? (upperWick / rng) * 100.0 : 0.0
+float lowerWickPct = rng > 0 ? (lowerWick / rng) * 100.0 : 0.0
+
+bool isBull = close > open
+bool isBear = close < open
+
+float avgPrevRange = ta.sma(rng[1], eleLookback)
+float slBuffer = bufferMode == "Ticks" ? slBufferValue * syminfo.mintick : slBufferValue
+
+//====================================================
+// ELEPHANT BAR
+//====================================================
+bool dominantBody = bodyPct >= minBodyPct
+bool wickOk = not useWickFilter or (upperWickPct <= maxUpperWickPct and lowerWickPct <= maxLowerWickPct)
+bool largeRange = not na(avgPrevRange) and rng >= avgPrevRange * eleMult
+
+bool isElephant = largeRange and dominantBody and wickOk
+bool bullElephant = isBull and isElephant
+bool bearElephant = isBear and isElephant
+
+bool prevBullElephant = bullElephant[1]
+bool prevBearElephant = bearElephant[1]
+
+//====================================================
+// PATTERN CONFIRMATION
+//====================================================
+float prevBodyHigh = math.max(open[1], close[1])
+float prevBodyLow  = math.min(open[1], close[1])
+
+float currBodyHigh = math.max(open, close)
+float currBodyLow  = math.min(open, close)
+
+float prevBodySize = math.abs(close[1] - open[1])
+float currBodySize = math.abs(close - open)
+
+bool confirmBodyStrongEnough = not useConfirmBodyRatio or (prevBodySize > 0 and currBodySize >= prevBodySize * confirmBodyRatio)
+
+bool confirmBullBarOk = requireSecondBarElephant ? bullElephant : isBull
+bool confirmBearBarOk = requireSecondBarElephant ? bearElephant : isBear
+
+bool bearFullCandle = prevBullElephant and confirmBearBarOk and confirmBodyStrongEnough and high >= high[1] and low <= low[1]
+bool bullFullCandle = prevBearElephant and confirmBullBarOk and confirmBodyStrongEnough and low <= low[1] and high >= high[1]
+
+bool bearBodyEngulf = prevBullElephant and confirmBearBarOk and confirmBodyStrongEnough and currBodyHigh >= prevBodyHigh and currBodyLow <= prevBodyLow
+bool bullBodyEngulf = prevBearElephant and confirmBullBarOk and confirmBodyStrongEnough and currBodyLow <= prevBodyLow and currBodyHigh >= prevBodyHigh
+
+bool bearCloseBeyondBodyBase = prevBullElephant and confirmBearBarOk and confirmBodyStrongEnough and close < prevBodyLow
+bool bullCloseBeyondBodyBase = prevBearElephant and confirmBullBarOk and confirmBodyStrongEnough and close > prevBodyHigh
+
+bool bearCloseBeyondBody = requireExtremeSweepForCloseMode ? (bearCloseBeyondBodyBase and high >= high[1]) : bearCloseBeyondBodyBase
+bool bullCloseBeyondBody = requireExtremeSweepForCloseMode ? (bullCloseBeyondBodyBase and low <= low[1]) : bullCloseBeyondBodyBase
+
+bool anyPatternEnabled = useFullCandleEngulf or useBodyEngulf or useCloseBeyondBody
+
+bool bearPattern =
+     (useFullCandleEngulf and bearFullCandle) or
+     (useBodyEngulf and bearBodyEngulf) or
+     (useCloseBeyondBody and bearCloseBeyondBody)
+
+bool bullPattern =
+     (useFullCandleEngulf and bullFullCandle) or
+     (useBodyEngulf and bullBodyEngulf) or
+     (useCloseBeyondBody and bullCloseBeyondBody)
+
+bool bearPatternFinal = anyPatternEnabled and bearPattern
+bool bullPatternFinal = anyPatternEnabled and bullPattern
+
+//====================================================
+// CONTEXT FILTER DISABLED
+//====================================================
+bool allowBuyContext  = not enableContextFilter
+bool allowSellContext = not enableContextFilter
+
+//====================================================
+// FINAL SIGNALS
+//====================================================
+bool rawBuySignal  = bullPatternFinal and allowBuyContext
+bool rawSellSignal = bearPatternFinal and allowSellContext
+
+//====================================================
+// TRADE LEVELS
+//====================================================
+float buyEntry = close
+float sellEntry = close
+
+float buySL  = low - slBuffer
+float sellSL = high + slBuffer
+
+float buyRisk  = buyEntry - buySL
+float sellRisk = sellSL - sellEntry
+
+float buyTP  = buyEntry + buyRisk * tpMult
+float sellTP = sellEntry - sellRisk * tpMult
+
+//====================================================
+// VIRTUAL POSITION TRACKING (unchanged from the original indicator — drives
+// the custom stats table below; independent of the real strategy.* calls)
+//====================================================
+var int   posDir      = 0
+var float posEntry    = na
+var float posSL       = na
+var float posTP       = na
+var int   posEntryBar = na
+
+var line entryLine = na
+var line slLine    = na
+var line tpLine    = na
+
+bool canOpenNewTrade = not oneTradeAtATime or posDir == 0
+
+bool buySignal  = rawBuySignal and canOpenNewTrade
+bool sellSignal = rawSellSignal and canOpenNewTrade
+
+if buySignal
+    posDir      := 1
+    posEntry    := buyEntry
+    posSL       := buySL
+    posTP       := buyTP
+    posEntryBar := bar_index
+
+    if showEntrySLTPLines
+        line.delete(entryLine)
+        line.delete(slLine)
+        line.delete(tpLine)
+        entryLine := line.new(bar_index, posEntry, bar_index + 20, posEntry, color=color.white, width=1)
+        slLine    := line.new(bar_index, posSL,    bar_index + 20, posSL,    color=color.red, width=1)
+        tpLine    := line.new(bar_index, posTP,    bar_index + 20, posTP,    color=color.lime, width=1)
+
+if sellSignal
+    posDir      := -1
+    posEntry    := sellEntry
+    posSL       := sellSL
+    posTP       := sellTP
+    posEntryBar := bar_index
+
+    if showEntrySLTPLines
+        line.delete(entryLine)
+        line.delete(slLine)
+        line.delete(tpLine)
+        entryLine := line.new(bar_index, posEntry, bar_index + 20, posEntry, color=color.white, width=1)
+        slLine    := line.new(bar_index, posSL,    bar_index + 20, posSL,    color=color.red, width=1)
+        tpLine    := line.new(bar_index, posTP,    bar_index + 20, posTP,    color=color.lime, width=1)
+
+if showEntrySLTPLines and posDir != 0
+    line.set_x2(entryLine, bar_index + 20)
+    line.set_x2(slLine, bar_index + 20)
+    line.set_x2(tpLine, bar_index + 20)
+
+//====================================================
+// EXIT LOGIC
+// Conservative intrabar assumption:
+// if both TP and SL are touched in same bar, count as loss
+//====================================================
+bool longStopHit  = posDir == 1 and low <= posSL
+bool longTPHit    = posDir == 1 and high >= posTP
+
+bool shortStopHit = posDir == -1 and high >= posSL
+bool shortTPHit   = posDir == -1 and low <= posTP
+
+bool longExitLoss  = posDir == 1 and longStopHit
+bool longExitWin   = posDir == 1 and not longStopHit and longTPHit
+
+bool shortExitLoss = posDir == -1 and shortStopHit
+bool shortExitWin  = posDir == -1 and not shortStopHit and shortTPHit
+
+//====================================================
+// STORE CLOSED TRADE RESULTS
+//====================================================
+var resultBarArr = array.new_int()
+var resultValArr = array.new_int()
+var resultPnLArr = array.new_float()
+
+if longExitWin
+    float tradePnL = posTP - posEntry
+    if showExitMarks
+        label.new(bar_index, high, "TP", style=label.style_label_down, color=color.yellow, textcolor=color.black)
+    array.push(resultBarArr, posEntryBar)
+    array.push(resultValArr, 1)
+    array.push(resultPnLArr, tradePnL)
+    posDir := 0
+    posEntry := na
+    posSL := na
+    posTP := na
+    posEntryBar := na
+    line.delete(entryLine)
+    line.delete(slLine)
+    line.delete(tpLine)
+
+if longExitLoss
+    float tradePnL = posSL - posEntry
+    if showExitMarks
+        label.new(bar_index, low, "SL", style=label.style_label_up, color=color.orange, textcolor=color.black)
+    array.push(resultBarArr, posEntryBar)
+    array.push(resultValArr, 0)
+    array.push(resultPnLArr, tradePnL)
+    posDir := 0
+    posEntry := na
+    posSL := na
+    posTP := na
+    posEntryBar := na
+    line.delete(entryLine)
+    line.delete(slLine)
+    line.delete(tpLine)
+
+if shortExitWin
+    float tradePnL = posEntry - posTP
+    if showExitMarks
+        label.new(bar_index, low, "TP", style=label.style_label_up, color=color.yellow, textcolor=color.black)
+    array.push(resultBarArr, posEntryBar)
+    array.push(resultValArr, 1)
+    array.push(resultPnLArr, tradePnL)
+    posDir := 0
+    posEntry := na
+    posSL := na
+    posTP := na
+    posEntryBar := na
+    line.delete(entryLine)
+    line.delete(slLine)
+    line.delete(tpLine)
+
+if shortExitLoss
+    float tradePnL = posEntry - posSL
+    if showExitMarks
+        label.new(bar_index, high, "SL", style=label.style_label_down, color=color.orange, textcolor=color.black)
+    array.push(resultBarArr, posEntryBar)
+    array.push(resultValArr, 0)
+    array.push(resultPnLArr, tradePnL)
+    posDir := 0
+    posEntry := na
+    posSL := na
+    posTP := na
+    posEntryBar := na
+    line.delete(entryLine)
+    line.delete(slLine)
+    line.delete(tpLine)
+
+//====================================================
+// CLEAN OLD STATS RESULTS
+//====================================================
+if array.size(resultBarArr) > 0
+    for i = array.size(resultBarArr) - 1 to 0
+        if bar_index - array.get(resultBarArr, i) > statsLookbackBars
+            array.remove(resultBarArr, i)
+            array.remove(resultValArr, i)
+            array.remove(resultPnLArr, i)
+
+//====================================================
+// STATS CALCULATION
+//====================================================
+int totalTrades = 0
+int wins = 0
+int losses = 0
+float netProfitPrice = 0.0
+float netProfitTicks = 0.0
+float winRate = na
+
+if array.size(resultValArr) > 0
+    totalTrades := array.size(resultValArr)
+    for i = 0 to array.size(resultValArr) - 1
+        int v = array.get(resultValArr, i)
+        if v == 1
+            wins += 1
+        else
+            losses += 1
+
+if array.size(resultPnLArr) > 0
+    for i = 0 to array.size(resultPnLArr) - 1
+        float p = array.get(resultPnLArr, i)
+        netProfitPrice += p
+        netProfitTicks += syminfo.mintick != 0 ? p / syminfo.mintick : 0.0
+
+winRate := totalTrades > 0 ? (wins * 100.0 / totalTrades) : na
+
+//====================================================
+// STRATEGY EXECUTION (new, 2026-08-20) — real orders alongside the manual
+// tracking above, so this shows up in the Strategy Tester. Uses the same
+// buySignal/sellSignal booleans and the same fixed SL/TP prices computed
+// from the signal bar, so the two bookkeeping systems track the same
+// trades in parallel. pyramiding=0 + oneTradeAtATime both block stacking.
+//====================================================
+if buySignal
+    strategy.entry("Long", strategy.long)
+if sellSignal
+    strategy.entry("Short", strategy.short)
+
+if strategy.position_size > 0 and not na(posSL) and not na(posTP)
+    strategy.exit("Long Exit", "Long", stop = posSL, limit = posTP)
+if strategy.position_size < 0 and not na(posSL) and not na(posTP)
+    strategy.exit("Short Exit", "Short", stop = posSL, limit = posTP)
+
+//====================================================
+// SIGNAL PLOTS
+//====================================================
+plotshape(buySignal, title="BUY", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.large)
+plotshape(sellSignal, title="SELL", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.large)
+
+if showSignalLabels and buySignal
+    string txt = "BUY\nEntry: " + str.tostring(buyEntry, format.mintick) +
+          "\nSL: " + str.tostring(buySL, format.mintick) +
+          "\nTP (" + str.tostring(tpMult) + "R): " + str.tostring(buyTP, format.mintick)
+    label.new(bar_index, low, txt, style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.black)
+
+if showSignalLabels and sellSignal
+    string txt = "SELL\nEntry: " + str.tostring(sellEntry, format.mintick) +
+          "\nSL: " + str.tostring(sellSL, format.mintick) +
+          "\nTP (" + str.tostring(tpMult) + "R): " + str.tostring(sellTP, format.mintick)
+    label.new(bar_index, high, txt, style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white)
+
+//====================================================
+// STATS TABLE
+//====================================================
+var table statsTbl = table.new(f_table_pos(tablePosition), 2, 9, border_width=1)
+
+if showStatsTable and barstate.islast
+    table.cell(statsTbl, 0, 0, "Metric", text_color=color.white, bgcolor=color.rgb(40, 40, 40))
+    table.cell(statsTbl, 1, 0, "Value",  text_color=color.white, bgcolor=color.rgb(40, 40, 40))
+
+    table.cell(statsTbl, 0, 1, "Lookback bars")
+    table.cell(statsTbl, 1, 1, str.tostring(statsLookbackBars))
+
+    table.cell(statsTbl, 0, 2, "TP multiple")
+    table.cell(statsTbl, 1, 2, str.tostring(tpMult) + "R")
+
+    table.cell(statsTbl, 0, 3, "Trades")
+    table.cell(statsTbl, 1, 3, str.tostring(totalTrades))
+
+    table.cell(statsTbl, 0, 4, "Wins")
+    table.cell(statsTbl, 1, 4, str.tostring(wins))
+
+    table.cell(statsTbl, 0, 5, "Losses")
+    table.cell(statsTbl, 1, 5, str.tostring(losses))
+
+    table.cell(statsTbl, 0, 6, "Win Rate")
+    table.cell(statsTbl, 1, 6, totalTrades > 0 ? str.tostring(winRate, "#.##") + "%" : "N/A")
+
+    table.cell(statsTbl, 0, 7, "Net profit (price)")
+    table.cell(statsTbl, 1, 7, str.tostring(netProfitPrice, format.mintick))
+
+    table.cell(statsTbl, 0, 8, "Net profit (ticks)")
+    table.cell(statsTbl, 1, 8, str.tostring(netProfitTicks, "#.##"))
+
+//====================================================
+// ALERTS
+//====================================================
+alertcondition(buySignal, title="BUY Signal", message="BUY signal detected")
+alertcondition(sellSignal, title="SELL Signal", message="SELL signal detected")
+alertcondition(longExitWin, title="TP LONG", message="Long TP reached")
+alertcondition(shortExitWin, title="TP SHORT", message="Short TP reached")
+alertcondition(longExitLoss, title="STOP LONG", message="Long stop hit")
+alertcondition(shortExitLoss, title="STOP SHORT", message="Short stop hit")
+
+//====================================================
+// DEBUG
+//====================================================
+plotshape(showDebug and bullElephant, title="Bull Elephant", style=shape.circle, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny)
+plotshape(showDebug and bearElephant, title="Bear Elephant", style=shape.circle, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny)
+
+plotshape(showDebug and bullPatternFinal, title="Bull Pattern", style=shape.square, location=location.belowbar, color=color.new(color.lime, 0), size=size.tiny)
+plotshape(showDebug and bearPatternFinal, title="Bear Pattern", style=shape.square, location=location.abovebar, color=color.new(color.maroon, 0), size=size.tiny)
