@@ -44,15 +44,15 @@
 //     band, until price actually touches it — then it disappears until
 //     the next signal. Purely visual, no strategy/entries.
 //
-// STOP LEVEL (2026-08-20, added):
-//   - On the SAME side as entry — R2 for a short, S2 for a long — frozen
-//     at whatever that band's level was on the signal bar (unlike the TP
-//     dot, this does NOT keep moving with the band afterward; a stop is
-//     set once, at entry).
-//   - EXCEPTION: if price was already within `slBufferTicks` (default 25)
-//     of that band on the signal bar, R2/S2 is too tight to be a useful
-//     stop (almost no room), so a fixed `slFixedTicks` (default 100) from
-//     the entry price is used instead.
+// STOP LEVEL (2026-08-20, added; 2026-08-20 later — made it follow the band):
+//   - On the SAME side as entry — R2 for a short, S2 for a long — and
+//     FOLLOWS that band live every bar, same as the TP dot follows the
+//     opposite band (originally froze at the signal-bar value; changed
+//     per trader request to keep tracking afterward instead).
+//   - EXCEPTION: on any bar where price is within `slBufferTicks` (default
+//     25) of that band, S2/R2 is too tight to be a useful stop, so a fixed
+//     `slFixedTicks` (default 100) from the current close is used on that
+//     bar instead — also re-evaluated every bar, not just at entry.
 //   - Clears the same way the TP dot does: on a target hit, a stop hit, or
 //     a fresh signal in either direction taking over the tracking.
 //
@@ -592,48 +592,45 @@ qqeShort = (maShortOk and gapShortOk) ?
 // touches it, then goes away until the next signal. A fresh signal (either
 // direction) always takes over the tracking, even mid-track.
 //
-// The stop is on the SAME side as entry — R2 for a short, S2 for a long —
-// and is frozen at whatever that band's value was on the signal bar (it
-// does not keep moving afterward, unlike the TP dot). If price was already
-// within `slBufferTicks` of that band right at entry, R2/S2 would leave
-// almost no room, so a fixed `slFixedTicks` from the entry price is used
-// instead.
+// The stop is on the SAME side as entry — S2 for a long, R2 for a short —
+// and, per trader request 2026-08-20, FOLLOWS that band live every bar
+// (same as the TP dot does for the opposite band) instead of freezing at
+// the signal-bar value. If price is currently within `slBufferTicks` of
+// that band, S2/R2 would leave almost no room, so a fixed `slFixedTicks`
+// from the current close is used on that bar instead — this is
+// re-evaluated every bar too, so the stop can hop between "on the band"
+// and "fixed distance from price" as the two get close, not just once at
+// entry. Not a one-directional ratchet: it moves wherever the band (or the
+// buffer fallback) currently is, in either direction — ask if you want it
+// to only ever tighten, never loosen.
 // ============================================================================
 
 tick = tickOverride > 0 ? tickOverride : syminfo.mintick
 
-var int   qqeDir  = 0     // 1 = tracking a long (target = upper outer, stop = lower outer side), -1 = a short, 0 = none
-var float slLevel = na
+var int qqeDir = 0   // 1 = tracking a long (target = upper outer, stop follows lower outer), -1 = a short, 0 = none
 
 if not na(qqeLong)
     qqeDir := 1
-    entryPrice = close
-    slLevel := math.abs(entryPrice - lowerOuter) <= slBufferTicks * tick ?
-         entryPrice - slFixedTicks * tick :
-         lowerOuter
-
 if not na(qqeShort)
     qqeDir := -1
-    entryPrice = close
-    slLevel := math.abs(upperOuter - entryPrice) <= slBufferTicks * tick ?
-         entryPrice + slFixedTicks * tick :
-         upperOuter
+
+slLevel = qqeDir == 1 ?
+     (math.abs(close - lowerOuter) <= slBufferTicks * tick ? close - slFixedTicks * tick : lowerOuter) :
+     qqeDir == -1 ?
+     (math.abs(upperOuter - close) <= slBufferTicks * tick ? close + slFixedTicks * tick : upperOuter) :
+     na
 
 if qqeDir == 1
     if high >= upperOuter
         qqeDir := 0    // target hit
-        slLevel := na
     else if low <= slLevel
         qqeDir := 0    // stopped out
-        slLevel := na
 
 if qqeDir == -1
     if low <= lowerOuter
         qqeDir := 0    // target hit
-        slLevel := na
     else if high >= slLevel
         qqeDir := 0    // stopped out
-        slLevel := na
 
 tpLevel = qqeDir == 1 ?
      upperOuter :
