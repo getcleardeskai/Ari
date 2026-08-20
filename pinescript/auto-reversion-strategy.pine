@@ -7,14 +7,17 @@
 //
 // Rules, exactly as specified 2026-08-19 (long case; short is the exact mirror):
 //   1. BIAS  : the entire MRC channel sits above the 200 MA (equivalently:
-//              the MA is fully below the outer band). Mirror: entire MRC
-//              below the MA, for shorts. Must hold for biasConfirmBars
-//              consecutive confirmed bars (2026-08-20 — a strict single-bar
-//              check let one noisy bar count even when clearly surrounded
-//              by bars on the other side).
-//   2. TOUCH : price has touched the outer band at some point while that
-//              bias holds. Persistent, not same-bar — the touch and the
-//              signal do NOT need to happen on the same candle.
+//              the MA is fully below the outer band — meaning the FULL
+//              shaded gradient zone, not just the R2/S2 line; see the
+//              2026-08-20 correction below). Mirror: entire MRC below the
+//              MA, for shorts. Must hold for biasConfirmBars consecutive
+//              confirmed bars (a strict single-bar check let one noisy bar
+//              count even when clearly surrounded by bars on the other
+//              side).
+//   2. TOUCH : price has touched the true outer band (the far edge of the
+//              gradient zone) at some point while that bias holds.
+//              Persistent, not same-bar — the touch and the signal do NOT
+//              need to happen on the same candle.
 //   3. SIGNAL: once touched, wait (however long it takes) for a QQE
 //              long/short signal. It does not need to print while price is
 //              still inside/touching the band — only that a touch happened
@@ -101,7 +104,7 @@ multOuter = math.pi * outerMult
 
 upper1 = meanline + meanrange * multInner   // inner top band (R1) — exit target
 lower1 = meanline - meanrange * multInner
-upper2 = meanline + meanrange * multOuter   // outer band (R2/S2) — touch/bias boundary
+upper2 = meanline + meanrange * multOuter   // R2 line (drawn for reference; NOT the touch/bias boundary — see upper2_1 below)
 lower2 = meanline - meanrange * multOuter
 
 pMean   = plot(meanline, "MRC Mean", color = color.new(#FFCD00, 0), linewidth = 2)
@@ -112,8 +115,10 @@ pLower2 = plot(lower2, "MRC S2 (outer)", color = color.new(color.red, 50))
 fill(pUpper1, pUpper2, color = color.new(color.red, 88))
 fill(pLower1, pLower2, color = color.new(color.green, 88))
 
-// Gradient zone extending past the outer band — visual match to the source
-// indicator's "Draw Zone" feature.
+// Gradient zone extending past the R2/S2 line — visual match to the source
+// indicator's "Draw Zone" feature. upper2_1/lower2_1 are the TRUE outer edge
+// of "the entire MRC" (the touch/bias boundary) — R2/S2 is just a line
+// inside this zone, not the boundary itself.
 gradsize = 0.5
 
 upper2_1 = upper2 + meanrange * gradsize * 4
@@ -182,13 +187,19 @@ fill(pl8, pl9, color = showZone ? zColor8 : na)
 
 // ---------------------------------------------------------------------------
 // Bias — entire MRC above/below the 200 MA, i.e. the MA sits fully below the
-// outer band (longs) or fully above it (shorts)
+// outer band (longs) or fully above it (shorts).
+//
+// 2026-08-20 CORRECTION: "the outer band" is the full shaded gradient zone,
+// not the R2/S2 LINE. R2 (upper2/lower2) is just one line drawn inside that
+// zone — the zone extends further out to upper2_1/lower2_1. Bias (and the
+// touch condition below) now use that true outer edge instead of the R2
+// line, matching "not touching even the outer bands" literally.
 // ---------------------------------------------------------------------------
 maVal = maType == "SMMA" ? ta.rma(close, maLen) : ta.sma(close, maLen)
 plot(maVal, "Bias MA", color = color.new(color.white, 0), linewidth = 2)
 
-biasLongOk  = maVal < lower2
-biasShortOk = maVal > upper2
+biasLongOk  = maVal < lower2_1
+biasShortOk = maVal > upper2_1
 
 // Bias must hold for several consecutive CONFIRMED bars, not just the exact
 // instant a signal fires — 2026-08-20: a strict single-bar check let a
@@ -275,7 +286,7 @@ var int  barsSinceTouchLower = 999999
 var int  barsSinceTouchUpper = 999999
 
 if barstate.isconfirmed
-    if low <= lower2
+    if low <= lower2_1
         touchedLower := true
         barsSinceTouchLower := 0
     else if touchedLower
@@ -283,7 +294,7 @@ if barstate.isconfirmed
         if barsSinceTouchLower > touchExpiryBars
             touchedLower := false
 
-    if high >= upper2
+    if high >= upper2_1
         touchedUpper := true
         barsSinceTouchUpper := 0
     else if touchedUpper

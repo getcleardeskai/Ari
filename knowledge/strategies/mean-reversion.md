@@ -154,6 +154,15 @@ band edge — even surrounded by bars clearly on the other side — satisfied it
 bias to hold for `biasConfirmBars` (default 3) consecutive confirmed bars before it counts,
 instead of just the instant of the signal.
 
+**2026-08-20, root cause found:** trader clarified the actual mismatch — **"the outer band" is
+the full shaded gradient zone, not the R2/S2 line.** R2/S2 is just one reference line drawn
+inside that zone; the true outer edge of "the entire MRC" extends further out, to the widest
+boundary of the gradient shading (`upper2_1`/`lower2_1` in the code). Both the bias check and the
+touch condition were gated on the R2/S2 line itself — too narrow a boundary, since price or the
+MA could clear that line while still technically inside the shaded zone. Fixed: bias and touch
+both now use the true outer edge. This is the actual fix for the false Long/Short entries flagged
+above — the earlier `biasConfirmBars` change was a real improvement but not the root cause.
+
 The diagnostic funnel table and rule toggles from the debugging phase were removed from the
 script now that the ruleset is settled — they did their job (found the real bugs) and would just
 be clutter now. Can be added back if useful once shorts/volume are reintroduced.
