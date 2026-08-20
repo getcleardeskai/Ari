@@ -72,7 +72,7 @@ rsiSmooth = input.int(5, "RSI smoothing (EMA)", minval = 1, group = grpQQE)
 qqeFactor = input.float(4.238, "QQE factor", minval = 0.1, step = 0.001, group = grpQQE)
 
 grpRisk = "Risk / Exit"
-stopTicks       = input.float(70, "Stop loss (ticks)", minval = 1, group = grpRisk)
+stopTicks       = input.float(75, "Stop loss (ticks)", minval = 1, group = grpRisk)
 cooldownBars    = input.int(10, "Cooldown after exit (bars, blocks re-entry)", minval = 0, group = grpRisk)
 touchExpiryBars = input.int(20, "Touch expires after this many bars with no signal", minval = 1, group = grpRisk)
 biasConfirmBars = input.int(3, "Bias must hold for this many consecutive bars", minval = 1, group = grpRisk)
