@@ -17,6 +17,16 @@ live: a "Long" label printing well up in a clear short zone. Fixed by splitting 
 `maBelowOuter` (the actual long-valid zone) and `maAboveOuter` (the actual short-valid zone) so
 each signal only fires in the zone that matches its own direction.
 
+**2026-08-20, later — price-in-gap filter + TP target dot:** trader flagged a cluster of Short
+labels printing while price was clearly nowhere near the band (SMMA-side gating alone doesn't
+check where price actually is — the SMMA is slow, so it can sit outside the outer band for a long
+stretch while price bounces around well inside the channel the whole time). Added
+`priceInGapShort`/`priceInGapLong`: the signal bar itself must have wicked into the shaded zone
+between the inner and outer band, not just have the SMMA outside somewhere. Also added a TP target
+dot (`plot.style_circles`) that tracks the opposite outer band every bar after a signal, until
+price actually touches it, then clears until the next signal — purely visual, shows where the
+setup expects price to go.
+
 Pure visual indicator, no `strategy.*` — plots signals and alerts only, doesn't trade.
 
 **How to use it:** TradingView → open your chart → Pine Editor → paste this file's contents →

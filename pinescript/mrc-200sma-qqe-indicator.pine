@@ -26,7 +26,23 @@
 //     printing well up in a short zone. Split into `maBelowOuter` (valid
 //     long zone) and `maAboveOuter` (valid short zone) so each signal only
 //     prints in the zone that actually matches it.
+//   - 2026-08-20, later: SMMA-side gating alone still let through signals
+//     that fired while price itself was nowhere near the band — the SMMA
+//     is slow (200-bar), so it can sit outside the outer band for a long
+//     stretch while price bounces around well inside the channel the whole
+//     time, and any QQE cross during that stretch printed. Added a second,
+//     PRICE-based condition: the signal bar itself must have wicked into
+//     the shaded gap zone between the inner and outer band (`priceInGapShort`
+//     / `priceInGapLong`) — not just have the SMMA outside somewhere. Only
+//     the shorts/longs that actually formed with price inside that gap
+//     print now.
 //   - Original QQE logic converted to Pine v6
+//
+// TP TARGET DOT:
+//   - After a signal prints, a small dot tracks the OPPOSITE outer band
+//     (the level we'd expect price to reach) every bar, moving with the
+//     band, until price actually touches it — then it disappears until
+//     the next signal. Purely visual, no strategy/entries.
 //
 // MRC sizing matches the original fareidzulkifli MRC:
 //   Inner multiplier = 1.0
@@ -125,6 +141,11 @@ colMAOutside = input.color(
      "200 SMMA outside color",
      group = grpColor)
 
+colTP = input.color(
+     color.orange,
+     "TP target dot color",
+     group = grpColor)
+
 
 // ============================================================================
 // QQE SETTINGS
@@ -150,6 +171,11 @@ QQE = input.float(
 ThreshHold = input.int(
      10,
      title = "Thresh-hold",
+     group = grpQQE)
+
+showTP = input.bool(
+     true,
+     title = "Show TP target dot",
      group = grpQQE)
 
 
@@ -416,29 +442,86 @@ qqeShortRaw = QQExshort == 1 ?
 
 
 // ============================================================================
+// PRICE-IN-GAP FILTER
+// ============================================================================
+//
+// The SMMA-side gate alone only tells you the SMMA is somewhere beyond the
+// outer band — it says nothing about where PRICE actually is. Since the
+// SMMA is a slow 200-bar average, it can sit outside the outer band for a
+// long stretch while price spends most of that stretch bouncing around
+// well inside the channel, nowhere near either band. Any QQE cross during
+// that whole stretch used to print.
+//
+// priceInGapShort / priceInGapLong require the SIGNAL BAR ITSELF to have
+// wicked into the shaded gap zone between the inner and outer band (same
+// zone the "MRC SHADING" fill below draws) — not just have the SMMA
+// outside somewhere. Only signals that actually formed with price up
+// against (or past) that zone count now.
+// ============================================================================
+
+priceInGapShort = high >= upperInner   // candle reached at least the inner band on the short side
+priceInGapLong  = low  <= lowerInner   // candle reached at least the inner band on the long side
+
+
+// ============================================================================
 // QQE FILTER
 // ============================================================================
 //
 // THIS IS THE IMPORTANT PART:
 //
 // QQE Long only prints while the SMMA is below the lower outer band
-// (maBelowOuter) — the zone we actually look for longs in.
+// (maBelowOuter) AND price itself wicked into the gap zone on this bar
+// (priceInGapLong) — the zone we actually look for longs in.
 //
 // QQE Short only prints while the SMMA is above the upper outer band
-// (maAboveOuter) — the zone we actually look for shorts in.
+// (maAboveOuter) AND price itself wicked into the gap zone on this bar
+// (priceInGapShort) — the zone we actually look for shorts in.
 //
 // 2026-08-20 FIX: previously both were gated on the same direction-
 // agnostic `maOutsideMRC`, so a Long could print while the SMMA was
 // outside on the SHORT side (and vice versa) — any "outside" counted for
 // both signals. Now each signal only fires in the zone that matches it.
+//
+// 2026-08-20, later: added the price-in-gap condition above so a signal
+// also has to have price actually up against the band, not just the SMMA
+// sitting outside somewhere far from where price currently is.
 // ============================================================================
 
-qqeLong = maBelowOuter ?
+qqeLong = (maBelowOuter and priceInGapLong) ?
      qqeLongRaw :
      na
 
-qqeShort = maAboveOuter ?
+qqeShort = (maAboveOuter and priceInGapShort) ?
      qqeShortRaw :
+     na
+
+
+// ============================================================================
+// TP TARGET TRACKING
+// ============================================================================
+//
+// After a valid signal, track the OPPOSITE outer band as the expected
+// target — a dot that moves with the band every bar until price actually
+// touches it, then goes away until the next signal. A fresh signal (either
+// direction) always takes over the tracking, even mid-track.
+// ============================================================================
+
+var int qqeDir = 0   // 1 = tracking a long's target (upper outer band), -1 = a short's (lower outer band), 0 = none
+
+if not na(qqeLong)
+    qqeDir := 1
+if not na(qqeShort)
+    qqeDir := -1
+
+if qqeDir == 1 and high >= upperOuter
+    qqeDir := 0   // target hit
+if qqeDir == -1 and low <= lowerOuter
+    qqeDir := 0   // target hit
+
+tpLevel = qqeDir == 1 ?
+     upperOuter :
+     qqeDir == -1 ?
+     lowerOuter :
      na
 
 
@@ -465,6 +548,18 @@ plotshape(
      location = location.abovebar,
      color = color.red,
      size = size.tiny)
+
+
+// ============================================================================
+// TP TARGET DOT
+// ============================================================================
+
+plot(
+     showTP ? tpLevel : na,
+     title = "TP Target",
+     style = plot.style_circles,
+     color = color.new(colTP, 0),
+     linewidth = 3)
 
 
 // ============================================================================
