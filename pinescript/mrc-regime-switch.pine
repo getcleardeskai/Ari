@@ -182,12 +182,16 @@ regimeTF = input.timeframe(
      group = grpRegime)
 
 pivotLength = input.int(
-     3,
+     10,
      "Structure pivot length (bars each side, on regime TF)",
      minval = 1,
      group = grpRegime,
-     tooltip = "A swing high/low needs this many bars on both sides to confirm. Smaller = " +
-         "faster to confirm structure but noisier; larger = slower but cleaner.")
+     tooltip = "A swing high/low needs this many bars on both sides to confirm. Widened from 3 " +
+         "to 10 (2026-08-21) — 3 was too tight, tiny swings on the regime TF get broken by almost " +
+         "any routine multi-hour push (the same kind of move that also trips the entry's own " +
+         "200-SMMA bias condition), which was flagging trend almost continuously and starving " +
+         "entries. Smaller = faster to confirm structure but noisier; larger = slower but " +
+         "cleaner. Still a judgment call pending a real backtest run.")
 
 useATRCoTrigger = input.bool(
      true,

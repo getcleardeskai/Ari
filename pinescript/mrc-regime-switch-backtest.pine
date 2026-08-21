@@ -71,7 +71,7 @@ QQE = input.float(4.238, "Fast QQE Factor", minval = 0.1, group = grpQQE)
 regimeTF = input.timeframe("60", "Regime timeframe", group = grpRegime)
 
 pivotLength = input.int(
-     3,
+     10,
      "Structure pivot length (bars each side, on regime TF)",
      minval = 1,
      group = grpRegime)
