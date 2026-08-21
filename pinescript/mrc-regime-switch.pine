@@ -1,0 +1,1449 @@
+//@version=6
+
+// ============================================================================
+// MRC Regime Switch (In/Out Bands) + 200 SMMA + QQE
+//
+// Extends the original "MRC (In/Out Bands) + 200 SMMA + QQE" indicator with a
+// chop/trend regime filter and adaptive exit management. INDICATOR, not a
+// strategy — no strategy.entry()/strategy.close() calls, trade state is
+// tracked manually (as in the original) purely to drive the on-chart table
+// and the alertcondition()s an execution bot subscribes to.
+//
+// WHY THIS EXISTS (2026-08-21 design conversation)
+// - Trader's own data: mean reversion wins ~100% of the time in chop, and
+//   loses big (-$600/-$800, sometimes a ~2hr/$1k bleed) the moment the
+//   market actually trends. The strategy isn't broken, it's regime-blind.
+// - Two separate problems, two separate mechanisms:
+//   1) PREVENTION — don't take a new MR trade while the market is trending.
+//      Choppiness Index + ATR-expansion check on a higher timeframe (1hr
+//      default), gating longSignal/shortSignal.
+//   2) GET OUT SOONER — once in a trade, notice it's not behaving like a
+//      normal chop trade and bail before it becomes a multi-hour bleed.
+//      Three mechanisms, whichever fires first:
+//        - Structural stop: live outer band +/- an ATR buffer. Plain
+//          "close beyond outer band" was rejected because entries
+//          themselves sometimes happen past the outer band (price
+//          overextension) — the buffer gives that room back.
+//        - Time stop: normal winning trades resolve in 10-25 min, so a
+//          trade still open at 30 min is itself evidence of trend.
+//        - Catastrophic backstop: a last-resort net for a gap/flash move,
+//          in ATR terms rather than a fixed tick count so ONE rule set
+//          works across gold, silver, MNQ and MES despite very different
+//          tick sizes/volatility (a fixed "400 ticks" would be a tiny move
+//          on gold and an enormous one on MES — an ATR multiple scales
+//          itself per instrument automatically).
+//   Also: if the regime flips to Trend while a trade is open, that's a
+//   fresh exit trigger in its own right, on top of the three above.
+// - Regime updates roughly hourly (not daily) — trader's own numbers show
+//   the damage happens within ~2 hours, so a once-a-day check would already
+//   be too late; trader confirmed the strategy performs the same in every
+//   session, so no time-of-day/session logic is used, purely condition-based.
+// - Single universal rule set, no per-instrument tuning — trader trades
+//   gold, silver, MNQ and MES on the same logic.
+//
+// Everything below the regime/exit additions (MRC bands, 200 SMMA, QQE,
+// trade history table) is the trader's original script, unchanged except
+// where noted.
+// ============================================================================
+
+indicator(
+     "MRC Regime Switch (In/Out Bands) + 200 SMMA + QQE",
+     overlay = true,
+     max_lines_count = 500,
+     max_labels_count = 500)
+
+// ============================================================================
+// INPUT GROUPS
+// ============================================================================
+
+grpMRC     = "MRC"
+grpMA      = "200 SMMA"
+grpQQE     = "QQE"
+grpRegime  = "Chop / Trend Regime"
+grpExit    = "Exit Management (Stop / Time / Catastrophic)"
+grpTP      = "TP Target"
+grpHistory = "Trade History"
+grpColors  = "Colors"
+grpDisplay = "Display"
+
+// ============================================================================
+// MRC SETTINGS
+// ============================================================================
+
+mrcSource = input.source(
+     hlc3,
+     "Price source",
+     group = grpMRC)
+
+mrcLength = input.int(
+     200,
+     "Lookback period",
+     minval = 1,
+     group = grpMRC)
+
+innerMult = input.float(
+     1.0,
+     "Inner channel size multiplier",
+     minval = 0.1,
+     group = grpMRC)
+
+outerMult = input.float(
+     2.415,
+     "Outer channel size multiplier",
+     minval = 0.1,
+     group = grpMRC)
+
+showMean = input.bool(
+     false,
+     "Show MRC mean line",
+     group = grpMRC)
+
+showFill = input.bool(
+     true,
+     "Shade between inner and outer bands",
+     group = grpMRC)
+
+showInnerBands = input.bool(
+     true,
+     "Show inner bands",
+     group = grpMRC)
+
+showOuterBands = input.bool(
+     true,
+     "Show outer bands",
+     group = grpMRC)
+
+// ============================================================================
+// 200 SMMA SETTINGS
+// ============================================================================
+
+maLen = input.int(
+     200,
+     "SMMA length",
+     minval = 1,
+     group = grpMA)
+
+showMA = input.bool(
+     true,
+     "Show 200 SMMA",
+     group = grpMA)
+
+// ============================================================================
+// QQE SETTINGS
+// ============================================================================
+
+RSI_Period = input.int(
+     14,
+     "RSI Length",
+     minval = 1,
+     group = grpQQE)
+
+SF = input.int(
+     5,
+     "RSI Smoothing",
+     minval = 1,
+     group = grpQQE)
+
+QQE = input.float(
+     4.238,
+     "Fast QQE Factor",
+     minval = 0.1,
+     group = grpQQE)
+
+ThreshHold = input.int(
+     10,
+     "Thresh-hold",
+     minval = 0,
+     group = grpQQE)
+
+// ============================================================================
+// REGIME SETTINGS (chop vs trend alternator)
+// ============================================================================
+
+regimeTF = input.timeframe(
+     "60",
+     "Regime timeframe",
+     group = grpRegime)
+
+chopLength = input.int(
+     14,
+     "Choppiness Index length",
+     minval = 2,
+     group = grpRegime)
+
+chopThreshold = input.float(
+     50.0,
+     "Chop threshold (CHOP >= this = chop)",
+     minval = 0,
+     maxval = 100,
+     group = grpRegime,
+     tooltip = "Classic reference points are ~61.8 (very choppy) and ~38.2 (trending). " +
+         "50 is a starting middle ground — tune against your own charts.")
+
+atrLength = input.int(
+     14,
+     "ATR length (expansion check)",
+     minval = 1,
+     group = grpRegime)
+
+atrAvgLength = input.int(
+     20,
+     "ATR average length",
+     minval = 1,
+     group = grpRegime)
+
+atrExpansionMult = input.float(
+     1.3,
+     "ATR expansion multiplier",
+     minval = 1.0,
+     group = grpRegime,
+     tooltip = "If current ATR exceeds its own average by this multiple, treat that as a " +
+         "trend forming even if Choppiness hasn't caught up yet.")
+
+showRegimeBackground = input.bool(
+     true,
+     "Shade chart background by regime",
+     group = grpRegime)
+
+showRegimeTable = input.bool(
+     true,
+     "Show regime status (top left)",
+     group = grpRegime)
+
+// ============================================================================
+// EXIT MANAGEMENT SETTINGS
+// ============================================================================
+
+timeStopMinutes = input.int(
+     30,
+     "Time stop (minutes)",
+     minval = 1,
+     group = grpExit,
+     tooltip = "Normal winning trades resolve in 10-25 min. A trade still open past this is " +
+         "treated as evidence the market has left chop.")
+
+stopBufferATRMult = input.float(
+     0.5,
+     "Structural stop buffer beyond outer band (x ATR)",
+     minval = 0,
+     group = grpExit,
+     tooltip = "Stop sits this many ATRs (MRC's own smoothed true-range unit) beyond the live " +
+         "outer band, not on the band itself — gives room for entries that already happen past " +
+         "the outer band on overextension.")
+
+catastrophicATRMult = input.float(
+     6.0,
+     "Catastrophic backstop distance (x ATR at entry)",
+     minval = 1,
+     group = grpExit,
+     tooltip = "Last-resort net for a gap/flash move, fixed in ATR terms at entry rather than a " +
+         "flat tick count so one rule works across gold/silver/MNQ/MES despite very different " +
+         "tick sizes and volatility.")
+
+useRegimeFlipExit = input.bool(
+     true,
+     "Exit open trade immediately if regime flips to Trend",
+     group = grpExit)
+
+showExitLevels = input.bool(
+     true,
+     "Plot live stop / catastrophic levels while a trade is open",
+     group = grpExit)
+
+// ============================================================================
+// TP SETTINGS
+// ============================================================================
+
+showTP = input.bool(
+     true,
+     "Show TP target",
+     group = grpTP)
+
+tpMode = input.string(
+     "Opposite Outer Band",
+     "TP target",
+     options = [
+         "Opposite Outer Band",
+         "Opposite Inner Band"
+     ],
+     group = grpTP)
+
+tpStyle = input.string(
+     "Dots",
+     "TP display style",
+     options = [
+         "Dots",
+         "Line"
+     ],
+     group = grpTP)
+
+tpWidth = input.int(
+     3,
+     "TP line/dot width",
+     minval = 1,
+     maxval = 10,
+     group = grpTP)
+
+// ============================================================================
+// TRADE HISTORY SETTINGS
+// ============================================================================
+
+showHistory = input.bool(
+     true,
+     "Show trade history",
+     group = grpHistory)
+
+contracts = input.float(
+     1.0,
+     "Contracts",
+     minval = 0.01,
+     step = 1.0,
+     group = grpHistory)
+
+pointValue = input.float(
+     2.0,
+     "$ per point per contract",
+     minval = 0.01,
+     step = 0.01,
+     group = grpHistory)
+
+showExitPrice = input.bool(
+     true,
+     "Show exit price",
+     group = grpHistory)
+
+// ============================================================================
+// COLOR SETTINGS
+// ============================================================================
+
+// MRC
+
+colInner = input.color(
+     color.green,
+     "Inner band color",
+     group = grpColors)
+
+colOuter = input.color(
+     color.red,
+     "Outer band color",
+     group = grpColors)
+
+colMean = input.color(
+     #FFCD00,
+     "Mean line color",
+     group = grpColors)
+
+// SMMA
+
+colMA = input.color(
+     color.white,
+     "SMMA inside color",
+     group = grpColors)
+
+colMAOutside = input.color(
+     color.rgb(100, 181, 246),
+     "SMMA outside color",
+     group = grpColors)
+
+// Signals
+
+colLong = input.color(
+     color.green,
+     "Long signal color",
+     group = grpColors)
+
+colShort = input.color(
+     color.red,
+     "Short signal color",
+     group = grpColors)
+
+colSignalText = input.color(
+     color.white,
+     "Signal text color",
+     group = grpColors)
+
+// TP / Exit
+
+colTP = input.color(
+     color.orange,
+     "TP target color",
+     group = grpColors)
+
+colStop = input.color(
+     color.fuchsia,
+     "Structural stop color",
+     group = grpColors)
+
+colCatastrophic = input.color(
+     color.maroon,
+     "Catastrophic stop color",
+     group = grpColors)
+
+// History
+
+colWin = input.color(
+     color.lime,
+     "WIN color",
+     group = grpColors)
+
+colLoss = input.color(
+     color.red,
+     "LOSS color",
+     group = grpColors)
+
+colBE = input.color(
+     color.yellow,
+     "BREAKEVEN color",
+     group = grpColors)
+
+// Regime
+
+colChopBg = input.color(
+     color.new(color.green, 92),
+     "Chop background",
+     group = grpColors)
+
+colTrendBg = input.color(
+     color.new(color.red, 92),
+     "Trend background",
+     group = grpColors)
+
+// ============================================================================
+// OPACITY / DISPLAY SETTINGS
+// ============================================================================
+
+innerOpacity = input.int(
+     30,
+     "Inner band opacity",
+     minval = 0,
+     maxval = 100,
+     group = grpDisplay)
+
+outerOpacity = input.int(
+     20,
+     "Outer band opacity",
+     minval = 0,
+     maxval = 100,
+     group = grpDisplay)
+
+fillOpacity = input.int(
+     88,
+     "MRC fill opacity",
+     minval = 0,
+     maxval = 100,
+     group = grpDisplay)
+
+meanOpacity = input.int(
+     0,
+     "Mean line opacity",
+     minval = 0,
+     maxval = 100,
+     group = grpDisplay)
+
+maWidth = input.int(
+     2,
+     "SMMA width",
+     minval = 1,
+     maxval = 10,
+     group = grpDisplay)
+
+showLongSignals = input.bool(
+     true,
+     "Show Long labels",
+     group = grpDisplay)
+
+showShortSignals = input.bool(
+     true,
+     "Show Short labels",
+     group = grpDisplay)
+
+// ============================================================================
+// SUPER SMOOTHER
+// ============================================================================
+
+f_supersmoother(src, len) =>
+    a1 = math.exp(
+         -math.sqrt(2) * math.pi / len)
+
+    b1 = 2 * a1 * math.cos(
+         math.sqrt(2) * math.pi / len)
+
+    c3 = -math.pow(a1, 2)
+    c2 = b1
+    c1 = 1 - c2 - c3
+
+    var float ss = na
+
+    ss := c1 * src +
+         c2 * nz(ss[1], src[1]) +
+         c3 * nz(ss[2], src[2])
+
+    ss
+
+// ============================================================================
+// MRC CALCULATION
+// ============================================================================
+
+meanline = f_supersmoother(
+     mrcSource,
+     mrcLength)
+
+meanrange = f_supersmoother(
+     ta.tr,
+     mrcLength)
+
+// ============================================================================
+// MRC MULTIPLIERS
+// ============================================================================
+
+multInner = math.pi * innerMult
+multOuter = math.pi * outerMult
+
+// ============================================================================
+// MRC BANDS
+// ============================================================================
+
+// Inner channel
+
+upperInner = meanline + (meanrange * multInner)
+lowerInner = meanline - (meanrange * multInner)
+
+// Outer channel
+
+upperOuter = meanline + (meanrange * multOuter)
+lowerOuter = meanline - (meanrange * multOuter)
+
+// ============================================================================
+// 200 SMMA
+// ============================================================================
+
+maVal = ta.rma(
+     close,
+     maLen)
+
+// ============================================================================
+// SMMA / MRC RELATIONSHIP
+// ============================================================================
+
+maBelowOuter = maVal < lowerOuter
+maAboveOuter = maVal > upperOuter
+
+maOutsideMRC = maBelowOuter or maAboveOuter
+
+maPlotColor = maOutsideMRC
+     ? colMAOutside
+     : colMA
+
+// ============================================================================
+// MRC PLOTS
+// ============================================================================
+
+pInnU = plot(
+     showInnerBands ? upperInner : na,
+     title = "MRC R1 (Inner)",
+     color = color.new(colInner, innerOpacity),
+     linewidth = 1)
+
+pInnL = plot(
+     showInnerBands ? lowerInner : na,
+     title = "MRC S1 (Inner)",
+     color = color.new(colInner, innerOpacity),
+     linewidth = 1)
+
+pOutU = plot(
+     showOuterBands ? upperOuter : na,
+     title = "MRC R2 (Outer)",
+     color = color.new(colOuter, outerOpacity),
+     linewidth = 1)
+
+pOutL = plot(
+     showOuterBands ? lowerOuter : na,
+     title = "MRC S2 (Outer)",
+     color = color.new(colOuter, outerOpacity),
+     linewidth = 1)
+
+// ============================================================================
+// MRC SHADING
+// ============================================================================
+
+fill(
+     pInnU,
+     pOutU,
+     color = showFill
+         ? color.new(colOuter, fillOpacity)
+         : na,
+     title = "Upper MRC Shade")
+
+fill(
+     pInnL,
+     pOutL,
+     color = showFill
+         ? color.new(colInner, fillOpacity)
+         : na,
+     title = "Lower MRC Shade")
+
+// ============================================================================
+// MRC MEAN
+// ============================================================================
+
+plot(
+     showMean ? meanline : na,
+     title = "MRC Mean",
+     color = color.new(colMean, meanOpacity),
+     linewidth = 2)
+
+// ============================================================================
+// 200 SMMA
+// ============================================================================
+
+plot(
+     showMA ? maVal : na,
+     title = "200 SMMA",
+     color = color.new(maPlotColor, 0),
+     linewidth = maWidth)
+
+// ============================================================================
+// QQE CALCULATION
+// ============================================================================
+
+src = close
+
+Wilders_Period = RSI_Period * 2 - 1
+
+Rsi = ta.rsi(
+     src,
+     RSI_Period)
+
+RsiMa = ta.ema(
+     Rsi,
+     SF)
+
+AtrRsi = math.abs(
+     RsiMa[1] - RsiMa)
+
+MaAtrRsi = ta.ema(
+     AtrRsi,
+     Wilders_Period)
+
+dar = ta.ema(
+     MaAtrRsi,
+     Wilders_Period) * QQE
+
+// ============================================================================
+// QQE BANDS
+// ============================================================================
+
+var float longband = 0.0
+var float shortband = 0.0
+var int trend = 0
+
+DeltaFastAtrRsi = dar
+RSIndex = RsiMa
+
+newshortband = RSIndex + DeltaFastAtrRsi
+newlongband = RSIndex - DeltaFastAtrRsi
+
+longband := RSIndex[1] > longband[1] and RSIndex > longband[1] ?
+     math.max(longband[1], newlongband) :
+     newlongband
+
+shortband := RSIndex[1] < shortband[1] and RSIndex < shortband[1] ?
+     math.min(shortband[1], newshortband) :
+     newshortband
+
+// ============================================================================
+// QQE TREND
+// ============================================================================
+
+crossLongBand = ta.cross(
+     longband[1],
+     RSIndex)
+
+crossShortBand = ta.cross(
+     RSIndex,
+     shortband[1])
+
+trend := crossShortBand ?
+     1 :
+     crossLongBand ?
+     -1 :
+     nz(trend[1], 1)
+
+FastAtrRsiTL = trend == 1 ?
+     longband :
+     shortband
+
+// ============================================================================
+// FIND QQE CROSSES
+// ============================================================================
+
+var int QQExlong = 0
+var int QQExshort = 0
+
+QQExlong := FastAtrRsiTL < RSIndex ?
+     QQExlong + 1 :
+     0
+
+QQExshort := FastAtrRsiTL > RSIndex ?
+     QQExshort + 1 :
+     0
+
+// ============================================================================
+// ORIGINAL QQE CONDITIONS
+// ============================================================================
+
+qqeLongRaw = QQExlong == 1 ?
+     FastAtrRsiTL[1] - 50 :
+     na
+
+qqeShortRaw = QQExshort == 1 ?
+     FastAtrRsiTL[1] - 50 :
+     na
+
+// ============================================================================
+// PRICE-IN-GAP FILTER
+// ============================================================================
+
+// Long:
+// Price must reach the lower inner band.
+
+priceInGapLong = low <= lowerInner
+
+// Short:
+// Price must reach the upper inner band.
+
+priceInGapShort = high >= upperInner
+
+// ============================================================================
+// CHOP / TREND REGIME (higher timeframe, non-repainting)
+// ============================================================================
+
+f_choppiness(len) =>
+    sumTR = math.sum(ta.tr(true), len)
+    hh = ta.highest(high, len)
+    ll = ta.lowest(low, len)
+
+    100 * math.log10(sumTR / (hh - ll)) / math.log10(len)
+
+f_regime(chopLen, atrLen, atrAvgLen, atrMult) =>
+    chopVal = f_choppiness(chopLen)
+    atrVal = ta.atr(atrLen)
+    atrAvgVal = ta.sma(atrVal, atrAvgLen)
+    atrExpanded = atrVal > atrAvgVal * atrMult
+
+    [chopVal, atrExpanded]
+
+[chopHTF, atrExpandedHTF] = request.security(
+     syminfo.tickerid,
+     regimeTF,
+     f_regime(chopLength, atrLength, atrAvgLength, atrExpansionMult),
+     lookahead = barmerge.lookahead_off)
+
+// Chop = choppiness index high enough AND volatility isn't actively
+// expanding out of its own recent range (a fresh ATR breakout is treated as
+// trend forming even before the choppiness reading has caught up).
+
+isChop = chopHTF >= chopThreshold and not atrExpandedHTF
+
+regimeJustFlippedToTrend = barstate.isconfirmed and
+     not isChop and
+     isChop[1]
+
+// ============================================================================
+// REGIME BACKGROUND
+// ============================================================================
+
+bgcolor(
+     showRegimeBackground
+         ? (isChop ? colChopBg : colTrendBg)
+         : na,
+     title = "Regime background")
+
+// ============================================================================
+// FINAL QQE FILTER (now gated by regime — no new trades while trending)
+// ============================================================================
+
+qqeLong =
+     maBelowOuter and
+     priceInGapLong and
+     isChop ?
+     qqeLongRaw :
+     na
+
+qqeShort =
+     maAboveOuter and
+     priceInGapShort and
+     isChop ?
+     qqeShortRaw :
+     na
+
+// ============================================================================
+// SIGNAL FLAGS
+// ============================================================================
+
+longSignal = not na(qqeLong)
+shortSignal = not na(qqeShort)
+
+// ============================================================================
+// TP TARGET TRACKING
+// ============================================================================
+
+var int qqeDir = 0
+
+if longSignal
+    qqeDir := 1
+
+if shortSignal
+    qqeDir := -1
+
+// ============================================================================
+// DETERMINE CURRENT TP LEVEL
+// ============================================================================
+
+float tpLevel = na
+
+if qqeDir == 1
+    if tpMode == "Opposite Outer Band"
+        tpLevel := upperOuter
+    else
+        tpLevel := upperInner
+
+else if qqeDir == -1
+    if tpMode == "Opposite Outer Band"
+        tpLevel := lowerOuter
+    else
+        tpLevel := lowerInner
+
+// ============================================================================
+// TP HIT DETECTION (confirmed close only — a wick shouldn't end the trade)
+// ============================================================================
+
+bool tpHit = false
+
+if qqeDir == 1
+    if tpMode == "Opposite Outer Band"
+        tpHit := barstate.isconfirmed and close >= upperOuter
+    else
+        tpHit := barstate.isconfirmed and close >= upperInner
+
+else if qqeDir == -1
+    if tpMode == "Opposite Outer Band"
+        tpHit := barstate.isconfirmed and close <= lowerOuter
+    else
+        tpHit := barstate.isconfirmed and close <= lowerInner
+
+// ============================================================================
+// EXIT MANAGEMENT LEVELS
+//
+// Structural stop lives with the bands (live outer band +/- an ATR buffer),
+// not frozen at entry — meanrange is a 200-bar supersmoother so it moves too
+// slowly to meaningfully "chase" price within one 10-40 min trade. The
+// buffer is what gives overextended entries room instead of stopping out
+// immediately on the entry bar itself.
+//
+// Catastrophic backstop IS frozen at entry (uses meanrange as it was when
+// the trade opened) — it's meant to be a fixed last-resort net, not a
+// moving target.
+// ============================================================================
+
+longStopLevel = lowerOuter - (meanrange * stopBufferATRMult)
+shortStopLevel = upperOuter + (meanrange * stopBufferATRMult)
+
+// ============================================================================
+// TRADE HISTORY VARIABLES
+// ============================================================================
+
+// 1 = Long
+// -1 = Short
+// 0 = No active trade
+
+var int activeTrade = 0
+var float activeEntry = na
+var float activeMeanRange = na
+var int activeEntryTime = na
+
+var array<int> historyDirection = array.new_int()
+var array<float> historyEntry = array.new_float()
+var array<float> historyExit = array.new_float()
+var array<float> historyPnL = array.new_float()
+var array<string> historyReason = array.new_string()
+
+// ============================================================================
+// NEW SIGNAL / TRADE MANAGEMENT
+// ============================================================================
+
+// --------------------------------------------------------------------------
+// FIRST TRADE
+// --------------------------------------------------------------------------
+
+if activeTrade == 0
+
+    if longSignal
+        activeTrade := 1
+        activeEntry := close
+        activeMeanRange := meanrange
+        activeEntryTime := time
+
+    else if shortSignal
+        activeTrade := -1
+        activeEntry := close
+        activeMeanRange := meanrange
+        activeEntryTime := time
+
+// --------------------------------------------------------------------------
+// SHARED: RECORD A CLOSED TRADE
+// --------------------------------------------------------------------------
+
+f_recordTrade(direction, entryPrice, exitPrice, reason) =>
+    pnl = direction == 1 ?
+         (exitPrice - entryPrice) * pointValue * contracts :
+         (entryPrice - exitPrice) * pointValue * contracts
+
+    array.unshift(historyDirection, direction)
+    array.unshift(historyEntry, entryPrice)
+    array.unshift(historyExit, exitPrice)
+    array.unshift(historyPnL, pnl)
+    array.unshift(historyReason, reason)
+
+    if array.size(historyDirection) > 10
+        array.pop(historyDirection)
+        array.pop(historyEntry)
+        array.pop(historyExit)
+        array.pop(historyPnL)
+        array.pop(historyReason)
+
+// --------------------------------------------------------------------------
+// LONG ACTIVE
+// --------------------------------------------------------------------------
+
+if activeTrade == 1
+
+    catastrophicLevel = activeEntry - (activeMeanRange * catastrophicATRMult)
+
+    // Checked intrabar (fast/protective) — stops should fire quickly,
+    // targets should wait for a confirmed close.
+    catastrophicHit = low <= catastrophicLevel
+    structuralStopHit = low <= longStopLevel
+    timeStopHit = barstate.isconfirmed and
+         (time - activeEntryTime) >= timeStopMinutes * 60 * 1000
+    regimeExit = useRegimeFlipExit and regimeJustFlippedToTrend
+
+    if catastrophicHit
+        f_recordTrade(1, activeEntry, catastrophicLevel, "CATA-STOP")
+        activeTrade := 0
+        activeEntry := na
+
+    else if structuralStopHit
+        f_recordTrade(1, activeEntry, longStopLevel, "BAND-STOP")
+        activeTrade := 0
+        activeEntry := na
+
+    else if tpHit
+        exitPrice = tpMode == "Opposite Outer Band" ? upperOuter : upperInner
+        f_recordTrade(1, activeEntry, exitPrice, "TP")
+        activeTrade := 0
+        activeEntry := na
+
+    else if timeStopHit
+        f_recordTrade(1, activeEntry, close, "TIME-STOP")
+        activeTrade := 0
+        activeEntry := na
+
+    else if regimeExit
+        f_recordTrade(1, activeEntry, close, "REGIME-FLIP")
+        activeTrade := 0
+        activeEntry := na
+
+    // Opposite signal replaces the trade (still gated by isChop upstream)
+    else if shortSignal
+        f_recordTrade(1, activeEntry, close, "FLIP")
+        activeTrade := -1
+        activeEntry := close
+        activeMeanRange := meanrange
+        activeEntryTime := time
+
+// --------------------------------------------------------------------------
+// SHORT ACTIVE
+// --------------------------------------------------------------------------
+
+if activeTrade == -1
+
+    catastrophicLevel = activeEntry + (activeMeanRange * catastrophicATRMult)
+
+    catastrophicHit = high >= catastrophicLevel
+    structuralStopHit = high >= shortStopLevel
+    timeStopHit = barstate.isconfirmed and
+         (time - activeEntryTime) >= timeStopMinutes * 60 * 1000
+    regimeExit = useRegimeFlipExit and regimeJustFlippedToTrend
+
+    if catastrophicHit
+        f_recordTrade(-1, activeEntry, catastrophicLevel, "CATA-STOP")
+        activeTrade := 0
+        activeEntry := na
+
+    else if structuralStopHit
+        f_recordTrade(-1, activeEntry, shortStopLevel, "BAND-STOP")
+        activeTrade := 0
+        activeEntry := na
+
+    else if tpHit
+        exitPrice = tpMode == "Opposite Outer Band" ? lowerOuter : lowerInner
+        f_recordTrade(-1, activeEntry, exitPrice, "TP")
+        activeTrade := 0
+        activeEntry := na
+
+    else if timeStopHit
+        f_recordTrade(-1, activeEntry, close, "TIME-STOP")
+        activeTrade := 0
+        activeEntry := na
+
+    else if regimeExit
+        f_recordTrade(-1, activeEntry, close, "REGIME-FLIP")
+        activeTrade := 0
+        activeEntry := na
+
+    // Opposite signal replaces the trade (still gated by isChop upstream)
+    else if longSignal
+        f_recordTrade(-1, activeEntry, close, "FLIP")
+        activeTrade := 1
+        activeEntry := close
+        activeMeanRange := meanrange
+        activeEntryTime := time
+
+// ============================================================================
+// CLEAR TP AFTER HIT
+// ============================================================================
+
+if tpHit
+
+    qqeDir := 0
+    tpLevel := na
+
+// ============================================================================
+// LIVE EXIT LEVEL PLOTS (only meaningful while a trade is open)
+// ============================================================================
+
+plot(
+     showExitLevels ?
+         (activeTrade == 1 ? longStopLevel : activeTrade == -1 ? shortStopLevel : na) :
+         na,
+     title = "Structural Stop",
+     color = color.new(colStop, 0),
+     style = plot.style_circles,
+     linewidth = 2)
+
+plot(
+     showExitLevels ?
+         (activeTrade == 1 ? activeEntry - (activeMeanRange * catastrophicATRMult) :
+             activeTrade == -1 ? activeEntry + (activeMeanRange * catastrophicATRMult) : na) :
+         na,
+     title = "Catastrophic Backstop",
+     color = color.new(colCatastrophic, 0),
+     style = plot.style_circles,
+     linewidth = 1)
+
+// ============================================================================
+// QQE SIGNAL PLOTS
+// ============================================================================
+
+plotshape(
+     showLongSignals and longSignal,
+     title = "QQE Long",
+     text = "Long",
+     textcolor = colSignalText,
+     style = shape.labelup,
+     location = location.belowbar,
+     color = colLong,
+     size = size.tiny)
+
+plotshape(
+     showShortSignals and shortSignal,
+     title = "QQE Short",
+     text = "Short",
+     textcolor = colSignalText,
+     style = shape.labeldown,
+     location = location.abovebar,
+     color = colShort,
+     size = size.tiny)
+
+// ============================================================================
+// TP TARGET PLOT
+// ============================================================================
+
+plot(
+     showTP and tpStyle == "Line"
+         ? tpLevel
+         : na,
+     title = "TP Target Line",
+     color = color.new(colTP, 0),
+     linewidth = tpWidth)
+
+plot(
+     showTP and tpStyle == "Dots"
+         ? tpLevel
+         : na,
+     title = "TP Target Dot",
+     style = plot.style_circles,
+     color = color.new(colTP, 0),
+     linewidth = tpWidth)
+
+// ============================================================================
+// REGIME STATUS TABLE (top left)
+// ============================================================================
+
+var table regimeTable = table.new(
+     position.top_left,
+     2,
+     2,
+     border_width = 1)
+
+if barstate.islast
+
+    table.clear(
+         regimeTable,
+         0,
+         0,
+         1,
+         1)
+
+    if showRegimeTable
+
+        string regimeText = isChop ? "CHOP — TRADING ON" : "TREND — STANDING DOWN"
+        color regimeColor = isChop ? colWin : colLoss
+
+        table.cell(
+             regimeTable,
+             0,
+             0,
+             "REGIME",
+             text_color = color.silver,
+             bgcolor = color.new(color.gray, 15),
+             text_size = size.small)
+
+        table.cell(
+             regimeTable,
+             1,
+             0,
+             regimeText,
+             text_color = regimeColor,
+             bgcolor = color.new(color.gray, 15),
+             text_size = size.small)
+
+        table.cell(
+             regimeTable,
+             0,
+             1,
+             "CHOP " + str.tostring(chopHTF, "#.#"),
+             text_color = color.silver,
+             text_size = size.tiny)
+
+        table.cell(
+             regimeTable,
+             1,
+             1,
+             atrExpandedHTF ? "ATR EXPANDING" : "ATR NORMAL",
+             text_color = atrExpandedHTF ? colLoss : color.silver,
+             text_size = size.tiny)
+
+// ============================================================================
+// TRADE HISTORY TABLE
+// ============================================================================
+
+var table tradeTable = table.new(
+     position.middle_left,
+     6,
+     12,
+     border_width = 1)
+
+// ============================================================================
+// DRAW HISTORY TABLE
+// ============================================================================
+
+if barstate.islast
+
+    table.clear(
+         tradeTable,
+         0,
+         0,
+         5,
+         11)
+
+    if showHistory
+
+        // ------------------------------------------------------------
+        // TITLE
+        // ------------------------------------------------------------
+
+        table.cell(
+             tradeTable,
+             0,
+             0,
+             "LAST 10 TRADES",
+             text_color = color.white,
+             bgcolor = color.new(color.gray, 15),
+             text_size = size.small)
+
+        table.cell(
+             tradeTable,
+             1,
+             0,
+             "",
+             bgcolor = color.new(color.gray, 15))
+
+        table.cell(
+             tradeTable,
+             2,
+             0,
+             "",
+             bgcolor = color.new(color.gray, 15))
+
+        table.cell(
+             tradeTable,
+             3,
+             0,
+             "",
+             bgcolor = color.new(color.gray, 15))
+
+        table.cell(
+             tradeTable,
+             4,
+             0,
+             "",
+             bgcolor = color.new(color.gray, 15))
+
+        table.cell(
+             tradeTable,
+             5,
+             0,
+             "",
+             bgcolor = color.new(color.gray, 15))
+
+        // ------------------------------------------------------------
+        // COLUMN HEADERS
+        // ------------------------------------------------------------
+
+        table.cell(
+             tradeTable,
+             0,
+             1,
+             "#",
+             text_color = color.silver,
+             text_size = size.tiny)
+
+        table.cell(
+             tradeTable,
+             1,
+             1,
+             "SIDE",
+             text_color = color.silver,
+             text_size = size.tiny)
+
+        table.cell(
+             tradeTable,
+             2,
+             1,
+             "ENTRY",
+             text_color = color.silver,
+             text_size = size.tiny)
+
+        table.cell(
+             tradeTable,
+             3,
+             1,
+             "P/L",
+             text_color = color.silver,
+             text_size = size.tiny)
+
+        table.cell(
+             tradeTable,
+             4,
+             1,
+             "RESULT",
+             text_color = color.silver,
+             text_size = size.tiny)
+
+        table.cell(
+             tradeTable,
+             5,
+             1,
+             "EXIT",
+             text_color = color.silver,
+             text_size = size.tiny)
+
+        // ------------------------------------------------------------
+        // TRADE ROWS
+        // ------------------------------------------------------------
+
+        int tradeCount = array.size(historyDirection)
+
+        if tradeCount > 0
+
+            for i = 0 to tradeCount - 1
+
+                int row = i + 2
+
+                int direction = array.get(
+                     historyDirection,
+                     i)
+
+                float entryPrice = array.get(
+                     historyEntry,
+                     i)
+
+                float exitPrice = array.get(
+                     historyExit,
+                     i)
+
+                float pnl = array.get(
+                     historyPnL,
+                     i)
+
+                string reason = array.get(
+                     historyReason,
+                     i)
+
+                // ----------------------------------------------------
+                // RESULT IS BASED ONLY ON ACTUAL P/L
+                // ----------------------------------------------------
+
+                string resultText = pnl > 0 ?
+                     "WIN" :
+                     pnl < 0 ?
+                     "LOSS" :
+                     "BREAKEVEN"
+
+                color resultColor = pnl > 0 ?
+                     colWin :
+                     pnl < 0 ?
+                     colLoss :
+                     colBE
+
+                string sideText = direction == 1 ?
+                     "LONG" :
+                     "SHORT"
+
+                color sideColor = direction == 1 ?
+                     colLong :
+                     colShort
+
+                string entryText = str.tostring(
+                     entryPrice,
+                     format.mintick)
+
+                string pnlText = pnl > 0 ?
+                     "+$" + str.tostring(pnl, "#.##") :
+                     pnl < 0 ?
+                     "-$" + str.tostring(math.abs(pnl), "#.##") :
+                     "$0.00"
+
+                // ----------------------------------------------------
+                // NUMBER
+                // ----------------------------------------------------
+
+                table.cell(
+                     tradeTable,
+                     0,
+                     row,
+                     str.tostring(i + 1),
+                     text_color = color.white,
+                     text_size = size.tiny)
+
+                // ----------------------------------------------------
+                // SIDE
+                // ----------------------------------------------------
+
+                table.cell(
+                     tradeTable,
+                     1,
+                     row,
+                     sideText,
+                     text_color = sideColor,
+                     text_size = size.tiny)
+
+                // ----------------------------------------------------
+                // ENTRY
+                // ----------------------------------------------------
+
+                table.cell(
+                     tradeTable,
+                     2,
+                     row,
+                     entryText,
+                     text_color = color.white,
+                     text_size = size.tiny)
+
+                // ----------------------------------------------------
+                // P/L
+                // ----------------------------------------------------
+
+                table.cell(
+                     tradeTable,
+                     3,
+                     row,
+                     pnlText,
+                     text_color = resultColor,
+                     text_size = size.tiny)
+
+                // ----------------------------------------------------
+                // RESULT
+                // ----------------------------------------------------
+
+                table.cell(
+                     tradeTable,
+                     4,
+                     row,
+                     resultText,
+                     text_color = resultColor,
+                     text_size = size.tiny)
+
+                // ----------------------------------------------------
+                // EXIT REASON
+                // ----------------------------------------------------
+
+                table.cell(
+                     tradeTable,
+                     5,
+                     row,
+                     reason,
+                     text_color = color.silver,
+                     text_size = size.tiny)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(
+     longSignal,
+     title = "QQE Long",
+     message = "QQE Long")
+
+alertcondition(
+     shortSignal,
+     title = "QQE Short",
+     message = "QQE Short")
+
+alertcondition(
+     tpHit,
+     title = "TP Target Hit",
+     message = "MRC TP Target Hit")
+
+alertcondition(
+     (activeTrade == 1 and low <= longStopLevel) or
+     (activeTrade == -1 and high >= shortStopLevel),
+     title = "Structural Stop Hit",
+     message = "MRC Structural Stop Hit")
+
+alertcondition(
+     activeTrade != 0 and (time - activeEntryTime) >= timeStopMinutes * 60 * 1000,
+     title = "Time Stop Hit",
+     message = "MRC Time Stop Hit")
+
+alertcondition(
+     regimeJustFlippedToTrend,
+     title = "Regime Flipped To Trend",
+     message = "Regime flipped to TREND — stand down / exit open trades")
+
+alertcondition(
+     barstate.isconfirmed and isChop and not isChop[1],
+     title = "Regime Flipped To Chop",
+     message = "Regime flipped to CHOP — trading resumed")

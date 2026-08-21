@@ -25,6 +25,43 @@ side. No volume filter — deferred to a later version. See the file's own heade
 contents → Add to Chart → Strategy Tester tab. Hand-written, not yet run through TradingView's
 compiler — send me the exact error text if it throws one on first load.
 
+## `mrc-regime-switch.pine` — chop/trend regime filter + adaptive exits
+
+Added 2026-08-21. Extends the trader's own live 1-minute MRC + 200 SMMA + QQE **indicator**
+(pasted directly in conversation, not the same script as `auto-reversion-strategy.pine` above —
+this one has no bias-streak/touch/volume rules, just MRC + QQE + a trade-history table) with the
+"chop vs trend alternator" the trader asked for. Deliberately kept as an `indicator()`, not a
+`strategy()` — the trader wants the visual (regime status top-left, trade history middle-left) on
+their own chart, with an execution bot acting on the `alertcondition()`s.
+
+**Why:** trader's own data — mean reversion wins ~100% of the time in real chop, and loses big
+(-$600/-$800, sometimes a ~2hr/$1k bleed since the original script has no stop-loss) the moment
+the market trends. Two separate mechanisms, converged on after an extended discussion (see
+`../knowledge/strategies/mean-reversion.md`, 2026-08-21 entry, for the full reasoning):
+
+1. **Prevention (entry gate):** Choppiness Index + an ATR-expansion check computed on a 1hr
+   timeframe via `request.security`, gating `longSignal`/`shortSignal` so no new trade fires
+   outside chop. One universal rule/threshold, no session or time-of-day logic — trader confirmed
+   the strategy performs the same in every session (24/6 across gold, silver, MNQ, MES), so
+   market-condition detection alone is doing the work.
+2. **Get out sooner (exit management), whichever fires first:**
+   - **Structural stop** — live outer band, offset by an ATR buffer (not the raw band line) so
+     entries that legitimately happen past the outer band on overextension aren't stopped out
+     immediately.
+   - **Time stop** — 30 min, based on the trader's own data that working trades resolve in
+     10-25 min.
+   - **Catastrophic backstop** — an ATR multiple at entry, not a fixed tick count (trader's
+     original ask was "400 ticks," changed to ATR-scaled so one rule works across instruments
+     with very different tick sizes/volatility instead of being tiny on gold and huge on MES).
+   - **Regime flip** — if the 1hr regime flips to Trend while a trade is open, that's a fresh
+     exit trigger on its own.
+
+**How to use it:** same as the other scripts — paste into Pine Editor on the relevant chart, Add
+to Chart. Hand-written, not yet run through TradingView's compiler — send exact error text if it
+throws one on first load. Regime threshold (`Chop threshold`, default 50) and the ATR multipliers
+are exposed as inputs specifically because they need empirical tuning against real charts before
+this is trusted for full automation.
+
 ## `trend-bias-qqe-strategy.pine` — other active strategy
 
 Current focus (2026-08-19) — full pivot away from ICT confluences entirely. This is a real,

@@ -283,6 +283,64 @@ that correction was about bias, not touch. Touch and bias now use different boun
 touch = entering the band at all (upper2/lower2), bias = the MA clearing the entire band
 (upper2_1/lower2_1).
 
+## 2026-08-21 — Chop/trend regime alternator + adaptive exits
+
+Separate from the bias/touch/volume `auto-reversion-strategy.pine` line of work above — this
+covers the trader's actual **live 1-minute indicator** (MRC + 200 SMMA + QQE + trade-history
+table, no bias-streak/touch/volume rules), pasted directly in conversation, and a new goal: fully
+automate it, with a bot pressing the trend/chop switch, confirming entries, and managing exits.
+Implemented in `../../pinescript/mrc-regime-switch.pine`.
+
+**Trader's own diagnostic, which drove the whole design:** the strategy wins ~100% of the time
+when the market is genuinely chopping, and loses big — -$600/-$800, sometimes a ~2 hour bleed
+worth ~$1k — the moment it trends or gets forced into one. The original script has no stop-loss;
+a trade just sits open (TP or an opposite QQE signal are the only exits) until the market comes
+back or doesn't. Confirmed: the strategy performs the same across every session (24/6, gold,
+silver, MNQ, MES; only note was "Asia is very slow," which doesn't change the strategy's actual
+win rate there) — so regime detection needed to be purely condition-based, no time-of-day/session
+logic.
+
+**Two separate problems, discussed and resolved separately, because they need different reaction
+speeds:**
+
+1. **Entry prevention.** A regime gate computed on a 1hr timeframe (not daily — daily is too slow
+   to matter given damage happens within ~1-2 hours; not 15m-only — noisier, more prone to
+   whipsawing the switch itself right when it matters). Metric: **Choppiness Index** (chosen over
+   ADX/Efficiency Ratio because it's purpose-built for exactly this question and doesn't need
+   per-instrument threshold surgery), paired with an **ATR-expansion check** so a fresh volatility
+   breakout counts as "trend forming" even before the (inherently lagging) choppiness reading
+   catches up. One universal threshold across all four instruments, per trader's explicit request
+   — no per-instrument tuning.
+2. **Get out sooner**, once already in a trade — because no matter how good the entry gate is,
+   some trades will always be taken right at the chop→trend hinge, since the entry condition can
+   look identical either way. Two mechanisms, run on OR logic (whichever fires first):
+   - **Structural stop = the missing stop-loss**, defined off the strategy's own outer band rather
+     than an arbitrary $ amount. Trader flagged that plain "close beyond outer band" doesn't work
+     because entries themselves sometimes happen past the outer band (price overextension) — the
+     stop was widened to outer band **+ an ATR buffer** instead of sitting on the band itself, so
+     an already-extended entry isn't stopped out on its own entry bar.
+   - **Time stop, 30 minutes** (trader's number) — grounded in the trader's own data that working
+     trades resolve in 10-25 min, so a trade still open past that is itself evidence of trend.
+   - Also added, not separately discussed but a natural consequence of having a live regime
+     signal: if the regime flips to Trend while a trade is open, that's a fresh exit trigger too.
+   - **Catastrophic backstop:** trader's original ask was a flat "400 tick stop." Changed to an
+     **ATR multiple at entry** instead, because a fixed tick count isn't universal across
+     instruments with very different tick sizes/volatility (400 ticks is tiny on gold, enormous on
+     MES) — this was a deliberate substitution for the trader's literal ask, done to satisfy the
+     "one universal rule" requirement; flagged back to the trader rather than silently applied.
+
+**Kept as an indicator, not a strategy** — trader explicitly wants the visual (regime status top
+left, trade history middle left) on their own chart. `alertcondition()`s exist for entry signals,
+each exit type, and both regime flips, meant to feed an execution bot for full automation (same
+`bot/` webhook pattern as the trend strategy) — the bot side of this isn't built yet.
+
+**Open / needs empirical tuning once on a real chart:**
+- Choppiness threshold (default 50 — between the classic 38.2/61.8 reference points, untested).
+- ATR-expansion multiplier (default 1.3) and the structural-stop/catastrophic-stop ATR multipliers
+  (default 0.5x / 6x).
+- Whether "Asia is very slow" needs a separate liquidity/illiquidity filter, or whether it's just
+  quiet-but-clean chop that the Choppiness Index already handles fine — not yet distinguished.
+
 ## Reference examples (from chart screenshots, 2026-08-19)
 
 - **Valid long example** (2nd screenshot, Micro Gold Futures, 1m): 200 MA below MRC, candle
