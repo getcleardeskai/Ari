@@ -1,0 +1,386 @@
+//@version=5
+
+// ============================================================================
+// MRC Regime Switch — BACKTEST TWIN
+//
+// Built 2026-08-21 because hand-counted monthly recollection turned out to
+// be unreliable to build decisions on (imprecise at best; one full month of
+// numbers offered earlier in the design conversation was later admitted to
+// be fabricated). This is the SAME signal/regime/exit logic as
+// `mrc-regime-switch.pine`, wired to strategy.entry()/strategy.close()
+// instead of manual state tracking, so TradingView's own Strategy Tester
+// produces exact numbers: List of Trades (real per-trade P&L, exportable),
+// Performance Summary (net profit, win rate, profit factor), and monthly
+// breakdowns you can read off the equity curve — no more hand-counting.
+//
+// NOT what you trade off of day-to-day — `mrc-regime-switch.pine` (the
+// indicator) is still the one you watch live, per your own preference to
+// keep the visual. This file exists purely to answer "what would this
+// actually have done" with real numbers instead of memory.
+//
+// Signal/regime/exit logic is a direct port of mrc-regime-switch.pine as of
+// 2026-08-21 (structure-breakout regime gate, ATR-buffered outer-band stop,
+// 30 min time stop, 4x-ATR catastrophic backstop, regime-flip exit). Keep
+// the two files in sync by hand when either one's logic changes — see that
+// file's own header comment for the full reasoning behind each piece.
+// ============================================================================
+
+strategy(
+     "MRC Regime Switch (Backtest)",
+     overlay = true,
+     initial_capital = 10000,
+     default_qty_type = strategy.fixed,
+     default_qty_value = 1,
+     pyramiding = 0,
+     commission_type = strategy.commission.cash_per_contract,
+     commission_value = 0,
+     slippage = 0,
+     max_lines_count = 500,
+     max_labels_count = 500)
+
+// ============================================================================
+// INPUT GROUPS
+// ============================================================================
+
+grpMRC    = "MRC"
+grpMA     = "200 SMMA"
+grpQQE    = "QQE"
+grpRegime = "Chop / Trend Regime"
+grpExit   = "Exit Management"
+grpTP     = "TP Target"
+
+// ============================================================================
+// MRC / MA / QQE SETTINGS (same defaults as the live indicator)
+// ============================================================================
+
+mrcSource = input.source(hlc3, "Price source", group = grpMRC)
+mrcLength = input.int(200, "Lookback period", minval = 1, group = grpMRC)
+innerMult = input.float(1.0, "Inner channel size multiplier", minval = 0.1, group = grpMRC)
+outerMult = input.float(2.415, "Outer channel size multiplier", minval = 0.1, group = grpMRC)
+
+maLen = input.int(200, "SMMA length", minval = 1, group = grpMA)
+
+RSI_Period = input.int(14, "RSI Length", minval = 1, group = grpQQE)
+SF = input.int(5, "RSI Smoothing", minval = 1, group = grpQQE)
+QQE = input.float(4.238, "Fast QQE Factor", minval = 0.1, group = grpQQE)
+
+// ============================================================================
+// REGIME SETTINGS
+// ============================================================================
+
+regimeTF = input.timeframe("60", "Regime timeframe", group = grpRegime)
+
+pivotLength = input.int(
+     3,
+     "Structure pivot length (bars each side, on regime TF)",
+     minval = 1,
+     group = grpRegime)
+
+useATRCoTrigger = input.bool(
+     true,
+     "Also stand down on a fast ATR expansion (before structure confirms)",
+     group = grpRegime)
+
+atrLength = input.int(14, "ATR length (expansion check)", minval = 1, group = grpRegime)
+atrAvgLength = input.int(20, "ATR average length", minval = 1, group = grpRegime)
+
+atrExpansionMult = input.float(
+     1.3,
+     "ATR expansion multiplier",
+     minval = 1.0,
+     group = grpRegime)
+
+// ============================================================================
+// EXIT MANAGEMENT SETTINGS
+// ============================================================================
+
+timeStopMinutes = input.int(30, "Time stop (minutes)", minval = 1, group = grpExit)
+
+stopBufferATRMult = input.float(
+     0.5,
+     "Structural stop buffer beyond outer band (x ATR)",
+     minval = 0,
+     group = grpExit)
+
+catastrophicATRMult = input.float(
+     4.0,
+     "Catastrophic backstop distance (x ATR at entry)",
+     minval = 1,
+     group = grpExit)
+
+useRegimeFlipExit = input.bool(
+     true,
+     "Exit open trade immediately if regime flips to Trend",
+     group = grpExit)
+
+// ============================================================================
+// TP SETTINGS
+// ============================================================================
+
+tpMode = input.string(
+     "Opposite Outer Band",
+     "TP target",
+     options = ["Opposite Outer Band", "Opposite Inner Band"],
+     group = grpTP)
+
+// NOTE ON $ P&L ACCURACY: strategy() reads $/point straight from whatever
+// symbol's chart this is running on (MNQ1!, MES1!, MGC1!, SIL1!, etc.) —
+// there's nothing to configure here, just make sure you're backtesting on
+// the actual instrument's chart, not a different one with similar price
+// action.
+
+// ============================================================================
+// SUPER SMOOTHER
+// ============================================================================
+
+f_supersmoother(src, len) =>
+    a1 = math.exp(-math.sqrt(2) * math.pi / len)
+    b1 = 2 * a1 * math.cos(math.sqrt(2) * math.pi / len)
+    c3 = -math.pow(a1, 2)
+    c2 = b1
+    c1 = 1 - c2 - c3
+
+    var float ss = na
+    ss := c1 * src + c2 * nz(ss[1], src[1]) + c3 * nz(ss[2], src[2])
+    ss
+
+// ============================================================================
+// MRC CALCULATION
+// ============================================================================
+
+meanline = f_supersmoother(mrcSource, mrcLength)
+meanrange = f_supersmoother(ta.tr, mrcLength)
+
+multInner = math.pi * innerMult
+multOuter = math.pi * outerMult
+
+upperInner = meanline + (meanrange * multInner)
+lowerInner = meanline - (meanrange * multInner)
+upperOuter = meanline + (meanrange * multOuter)
+lowerOuter = meanline - (meanrange * multOuter)
+
+maVal = ta.rma(close, maLen)
+
+maBelowOuter = maVal < lowerOuter
+maAboveOuter = maVal > upperOuter
+
+plot(upperInner, title = "MRC R1 (Inner)", color = color.new(color.green, 30))
+plot(lowerInner, title = "MRC S1 (Inner)", color = color.new(color.green, 30))
+plot(upperOuter, title = "MRC R2 (Outer)", color = color.new(color.red, 20))
+plot(lowerOuter, title = "MRC S2 (Outer)", color = color.new(color.red, 20))
+plot(maVal, title = "200 SMMA", color = color.new(color.white, 0))
+
+// ============================================================================
+// QQE CALCULATION
+// ============================================================================
+
+src = close
+Wilders_Period = RSI_Period * 2 - 1
+
+Rsi = ta.rsi(src, RSI_Period)
+RsiMa = ta.ema(Rsi, SF)
+AtrRsi = math.abs(RsiMa[1] - RsiMa)
+MaAtrRsi = ta.ema(AtrRsi, Wilders_Period)
+dar = ta.ema(MaAtrRsi, Wilders_Period) * QQE
+
+var float longband = 0.0
+var float shortband = 0.0
+var int trend = 0
+
+DeltaFastAtrRsi = dar
+RSIndex = RsiMa
+
+newshortband = RSIndex + DeltaFastAtrRsi
+newlongband = RSIndex - DeltaFastAtrRsi
+
+longband := RSIndex[1] > longband[1] and RSIndex > longband[1] ?
+     math.max(longband[1], newlongband) : newlongband
+
+shortband := RSIndex[1] < shortband[1] and RSIndex < shortband[1] ?
+     math.min(shortband[1], newshortband) : newshortband
+
+crossLongBand = ta.cross(longband[1], RSIndex)
+crossShortBand = ta.cross(RSIndex, shortband[1])
+
+trend := crossShortBand ? 1 : crossLongBand ? -1 : nz(trend[1], 1)
+
+FastAtrRsiTL = trend == 1 ? longband : shortband
+
+var int QQExlong = 0
+var int QQExshort = 0
+
+QQExlong := FastAtrRsiTL < RSIndex ? QQExlong + 1 : 0
+QQExshort := FastAtrRsiTL > RSIndex ? QQExshort + 1 : 0
+
+qqeLongRaw = QQExlong == 1 ? FastAtrRsiTL[1] - 50 : na
+qqeShortRaw = QQExshort == 1 ? FastAtrRsiTL[1] - 50 : na
+
+priceInGapLong = low <= lowerInner
+priceInGapShort = high >= upperInner
+
+// ============================================================================
+// CHOP / TREND REGIME — structure-breakout, same as the live indicator
+// ============================================================================
+
+f_regime(pivotLen, atrLen, atrAvgLen, atrMult) =>
+    ph = ta.pivothigh(high, pivotLen, pivotLen)
+    pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+    var float swingHigh = na
+    var float swingLow = na
+    var float breakLevel = na
+    var int breakDir = 0
+
+    if not na(ph)
+        swingHigh := ph
+    if not na(pl)
+        swingLow := pl
+
+    if breakDir == 0
+        if not na(swingHigh) and close > swingHigh
+            breakDir := 1
+            breakLevel := swingHigh
+        else if not na(swingLow) and close < swingLow
+            breakDir := -1
+            breakLevel := swingLow
+    else if breakDir == 1 and close < breakLevel
+        breakDir := 0
+    else if breakDir == -1 and close > breakLevel
+        breakDir := 0
+
+    atrVal = ta.atr(atrLen)
+    atrAvgVal = ta.sma(atrVal, atrAvgLen)
+    atrExpanded = atrVal > atrAvgVal * atrMult
+
+    [breakDir, atrExpanded]
+
+[structDirHTF, atrExpandedHTF] = request.security(
+     syminfo.tickerid,
+     regimeTF,
+     f_regime(pivotLength, atrLength, atrAvgLength, atrExpansionMult),
+     lookahead = barmerge.lookahead_off)
+
+isChop = structDirHTF == 0 and (not useATRCoTrigger or not atrExpandedHTF)
+
+regimeJustFlippedToTrend = barstate.isconfirmed and not isChop and isChop[1]
+
+// ============================================================================
+// SIGNALS (regime-gated)
+// ============================================================================
+
+qqeLong = maBelowOuter and priceInGapLong and isChop ? qqeLongRaw : na
+qqeShort = maAboveOuter and priceInGapShort and isChop ? qqeShortRaw : na
+
+longSignal = not na(qqeLong)
+shortSignal = not na(qqeShort)
+
+plotshape(longSignal, title = "Long", style = shape.triangleup,
+     location = location.belowbar, color = color.green, size = size.tiny)
+plotshape(shortSignal, title = "Short", style = shape.triangledown,
+     location = location.abovebar, color = color.red, size = size.tiny)
+
+// ============================================================================
+// TP LEVEL
+// ============================================================================
+
+longTP = tpMode == "Opposite Outer Band" ? upperOuter : upperInner
+shortTP = tpMode == "Opposite Outer Band" ? lowerOuter : lowerInner
+
+tpHitLong = barstate.isconfirmed and close >= longTP
+tpHitShort = barstate.isconfirmed and close <= shortTP
+
+// ============================================================================
+// EXIT LEVELS
+// ============================================================================
+
+longStopLevel = lowerOuter - (meanrange * stopBufferATRMult)
+shortStopLevel = upperOuter + (meanrange * stopBufferATRMult)
+
+// ============================================================================
+// TRADE STATE (mirrors strategy.position_size, plus what the built-ins don't
+// track: the meanrange/time at entry, needed for the catastrophic level and
+// the time stop)
+// ============================================================================
+
+var float entryMeanRange = na
+var int entryTime = na
+
+inLong = strategy.position_size > 0
+inShort = strategy.position_size < 0
+flat = strategy.position_size == 0
+
+// ============================================================================
+// ENTRIES
+// ============================================================================
+
+if flat and longSignal
+    strategy.entry("Long", strategy.long)
+    entryMeanRange := meanrange
+    entryTime := time
+
+if flat and shortSignal
+    strategy.entry("Short", strategy.short)
+    entryMeanRange := meanrange
+    entryTime := time
+
+// ============================================================================
+// LONG EXITS — priority order, whichever fires first
+// ============================================================================
+
+if inLong
+
+    catastrophicLevel = strategy.position_avg_price - (entryMeanRange * catastrophicATRMult)
+    catastrophicHit = low <= catastrophicLevel
+    structuralStopHit = low <= longStopLevel
+    timeStopHit = barstate.isconfirmed and (time - entryTime) >= timeStopMinutes * 60 * 1000
+    regimeExit = useRegimeFlipExit and regimeJustFlippedToTrend
+
+    if catastrophicHit
+        strategy.close("Long", comment = "CATA-STOP")
+    else if structuralStopHit
+        strategy.close("Long", comment = "BAND-STOP")
+    else if tpHitLong
+        strategy.close("Long", comment = "TP")
+    else if timeStopHit
+        strategy.close("Long", comment = "TIME-STOP")
+    else if regimeExit
+        strategy.close("Long", comment = "REGIME-FLIP")
+    else if shortSignal
+        strategy.close("Long", comment = "FLIP")
+        strategy.entry("Short", strategy.short)
+        entryMeanRange := meanrange
+        entryTime := time
+
+// ============================================================================
+// SHORT EXITS — priority order, whichever fires first
+// ============================================================================
+
+if inShort
+
+    catastrophicLevel = strategy.position_avg_price + (entryMeanRange * catastrophicATRMult)
+    catastrophicHit = high >= catastrophicLevel
+    structuralStopHit = high >= shortStopLevel
+    timeStopHit = barstate.isconfirmed and (time - entryTime) >= timeStopMinutes * 60 * 1000
+    regimeExit = useRegimeFlipExit and regimeJustFlippedToTrend
+
+    if catastrophicHit
+        strategy.close("Short", comment = "CATA-STOP")
+    else if structuralStopHit
+        strategy.close("Short", comment = "BAND-STOP")
+    else if tpHitShort
+        strategy.close("Short", comment = "TP")
+    else if timeStopHit
+        strategy.close("Short", comment = "TIME-STOP")
+    else if regimeExit
+        strategy.close("Short", comment = "REGIME-FLIP")
+    else if longSignal
+        strategy.close("Short", comment = "FLIP")
+        strategy.entry("Long", strategy.long)
+        entryMeanRange := meanrange
+        entryTime := time
+
+// ============================================================================
+// REGIME BACKGROUND (sanity check while reading the backtest visually)
+// ============================================================================
+
+bgcolor(isChop ? color.new(color.green, 92) : color.new(color.red, 92), title = "Regime background")

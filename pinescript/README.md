@@ -58,9 +58,40 @@ the market trends. Two separate mechanisms, converged on after an extended discu
 
 **How to use it:** same as the other scripts — paste into Pine Editor on the relevant chart, Add
 to Chart. Hand-written, not yet run through TradingView's compiler — send exact error text if it
-throws one on first load. Regime threshold (`Chop threshold`, default 50) and the ATR multipliers
-are exposed as inputs specifically because they need empirical tuning against real charts before
-this is trusted for full automation.
+throws one on first load. The ATR multipliers are exposed as inputs specifically because they need
+empirical tuning against real backtest numbers before this is trusted for full automation.
+
+**2026-08-21, revised same day:** real monthly MNQ P&L came back and changed the regime design.
+Choppiness Index was dropped as the entry gate — measured effect was ~3 trades/month against
+9-12 real setups visible on chart, without protecting against the one month that actually mattered.
+Replaced with **structure-breakout**: track the last confirmed swing high/low on the regime
+timeframe (`ta.pivothigh`/`ta.pivotlow`), chop = no confirmed break, trend = a confirmed close
+beyond one of them (self-clearing back to chop if the break gets reclaimed — no separate expiry
+rule needed). An ATR-expansion co-trigger (toggle-able) still stands down fast on a sudden vol
+spike ahead of pivot confirmation. Choppiness Index is kept in the regime table as an
+informational-only readout, no longer gating anything. Catastrophic backstop tightened 6x -> 4x
+ATR after a real -$1,600 single-bar loss inside an otherwise-chop month (June) came in far larger
+than every other loss that month — deliberately conservative pending real numbers to calibrate
+against properly (see the backtest twin below for how to get those).
+
+## `mrc-regime-switch-backtest.pine` — backtest twin of the above
+
+Added 2026-08-21, same day as the revision above — hand-counted monthly recollection turned out to
+be unreliable to build decisions on (one full month of "data" offered mid-conversation was later
+admitted to be fabricated). Same signal/regime/exit logic as `mrc-regime-switch.pine`, ported to a
+real `strategy()` with `strategy.entry()`/`strategy.close()` calls instead of manual state
+tracking, specifically so TradingView's own Strategy Tester produces exact numbers — List of
+Trades, Performance Summary, monthly P&L off the equity curve — instead of memory. **Not** what the
+trader watches live; `mrc-regime-switch.pine` (the indicator) stays the day-to-day chart per their
+explicit preference to keep the visual. Keep the two files' signal logic in sync by hand if either
+changes — commission/slippage default to 0 in the `strategy()` declaration (edit those constants
+directly for cost-inclusive numbers); $/point comes automatically from whatever instrument's chart
+it's run on, so just make sure that's the real symbol (MNQ1!, MES1!, MGC1!, SIL1!), not a lookalike.
+
+**How to use it:** TradingView → open the real instrument's chart → Pine Editor → paste → Add to
+Chart → Strategy Tester tab for Net Profit, win rate, profit factor, and a real equity curve you
+can read monthly numbers off directly. Hand-written, not yet run through TradingView's compiler —
+send exact error text if it throws one on first load.
 
 ## `trend-bias-qqe-strategy.pine` — other active strategy
 

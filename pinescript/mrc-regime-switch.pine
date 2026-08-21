@@ -9,29 +9,42 @@
 // tracked manually (as in the original) purely to drive the on-chart table
 // and the alertcondition()s an execution bot subscribes to.
 //
-// WHY THIS EXISTS (2026-08-21 design conversation)
+// WHY THIS EXISTS (2026-08-21 design conversation, revised same day after
+// real monthly stats came back)
 // - Trader's own data: mean reversion wins ~100% of the time in chop, and
 //   loses big (-$600/-$800, sometimes a ~2hr/$1k bleed) the moment the
 //   market actually trends. The strategy isn't broken, it's regime-blind.
 // - Two separate problems, two separate mechanisms:
 //   1) PREVENTION — don't take a new MR trade while the market is trending.
-//      Choppiness Index + ATR-expansion check on a higher timeframe (1hr
-//      default), gating longSignal/shortSignal.
-//   2) GET OUT SOONER — once in a trade, notice it's not behaving like a
-//      normal chop trade and bail before it becomes a multi-hour bleed.
-//      Three mechanisms, whichever fires first:
+//      First built on Choppiness Index + ATR-expansion (both on a 1hr
+//      higher timeframe). Real monthly MNQ numbers changed this: 4 of 5
+//      chop months were solidly profitable, the 2 trend months were flat
+//      (not disasters), and the one clearly bad month (June, -$950 net)
+//      was a single violent bar inside an otherwise-chop month — i.e. the
+//      real edge lives in chop and trend isn't even that dangerous on its
+//      own, but the entry gate was ALSO measured starving trades (~3/month
+//      vs. 9-12 real setups visible on chart) without protecting against
+//      the one loss that actually mattered. Choppiness Index dropped as
+//      the gate; replaced with a structure-breakout check (a confirmed
+//      close beyond the last swing high/low on the regime TF) — a sharp,
+//      single event instead of a threshold on a lagging smoothed ratio.
+//      Choppiness is kept as an informational-only readout in the table.
+//   2) GET OUT SOONER / TAIL RISK — once in a trade, cap the damage a
+//      single trade can do, independent of regime (June proves regime
+//      alone can't catch a violent single bar — the month still reads as
+//      chop on average). Whichever fires first:
 //        - Structural stop: live outer band +/- an ATR buffer. Plain
 //          "close beyond outer band" was rejected because entries
 //          themselves sometimes happen past the outer band (price
 //          overextension) — the buffer gives that room back.
 //        - Time stop: normal winning trades resolve in 10-25 min, so a
 //          trade still open at 30 min is itself evidence of trend.
-//        - Catastrophic backstop: a last-resort net for a gap/flash move,
-//          in ATR terms rather than a fixed tick count so ONE rule set
-//          works across gold, silver, MNQ and MES despite very different
-//          tick sizes/volatility (a fixed "400 ticks" would be a tiny move
-//          on gold and an enormous one on MES — an ATR multiple scales
-//          itself per instrument automatically).
+//        - Catastrophic backstop: a last-resort net for a gap/flash move
+//          or a violent single bar, in ATR terms (not a fixed tick count,
+//          so ONE rule set works across gold/silver/MNQ/MES despite very
+//          different tick sizes/volatility) — tightened 6x -> 4x after the
+//          June loss, a deliberately conservative guess pending real
+//          backtest numbers to calibrate against.
 //   Also: if the regime flips to Trend while a trade is open, that's a
 //   fresh exit trigger in its own right, on top of the three above.
 // - Regime updates roughly hourly (not daily) — trader's own numbers show
@@ -40,6 +53,9 @@
 //   session, so no time-of-day/session logic is used, purely condition-based.
 // - Single universal rule set, no per-instrument tuning — trader trades
 //   gold, silver, MNQ and MES on the same logic.
+// - See `mrc-regime-switch-backtest.pine` for a strategy() twin of this
+//   same logic, built specifically to get exact monthly P&L out of
+//   TradingView's own Strategy Tester instead of hand-counted recollection.
 //
 // Everything below the regime/exit additions (MRC bands, 200 SMMA, QQE,
 // trade history table) is the trader's original script, unchanged except
@@ -165,20 +181,21 @@ regimeTF = input.timeframe(
      "Regime timeframe",
      group = grpRegime)
 
-chopLength = input.int(
-     14,
-     "Choppiness Index length",
-     minval = 2,
-     group = grpRegime)
-
-chopThreshold = input.float(
-     50.0,
-     "Chop threshold (CHOP >= this = chop)",
-     minval = 0,
-     maxval = 100,
+pivotLength = input.int(
+     3,
+     "Structure pivot length (bars each side, on regime TF)",
+     minval = 1,
      group = grpRegime,
-     tooltip = "Classic reference points are ~61.8 (very choppy) and ~38.2 (trending). " +
-         "50 is a starting middle ground — tune against your own charts.")
+     tooltip = "A swing high/low needs this many bars on both sides to confirm. Smaller = " +
+         "faster to confirm structure but noisier; larger = slower but cleaner.")
+
+useATRCoTrigger = input.bool(
+     true,
+     "Also stand down on a fast ATR expansion (before structure confirms)",
+     group = grpRegime,
+     tooltip = "Pivot confirmation has an inherent lag (pivotLength bars). This gives a faster, " +
+         "supplementary trigger for a sudden volatility spike so we don't wait the full lag on an " +
+         "obviously violent move. Disable if this ends up filtering as aggressively as Choppiness did.")
 
 atrLength = input.int(
      14,
@@ -198,7 +215,16 @@ atrExpansionMult = input.float(
      minval = 1.0,
      group = grpRegime,
      tooltip = "If current ATR exceeds its own average by this multiple, treat that as a " +
-         "trend forming even if Choppiness hasn't caught up yet.")
+         "trend forming even before structure confirms it.")
+
+chopLength = input.int(
+     14,
+     "Choppiness Index length (display only, no longer gates trades)",
+     minval = 2,
+     group = grpRegime,
+     tooltip = "Kept as an informational readout in the regime table. Dropped as the gating " +
+         "signal 2026-08-21 — it was measured to starve entries (~3/month vs. 9-12 real setups " +
+         "seen on chart) without actually separating good months from bad ones.")
 
 showRegimeBackground = input.bool(
      true,
@@ -232,13 +258,16 @@ stopBufferATRMult = input.float(
          "the outer band on overextension.")
 
 catastrophicATRMult = input.float(
-     6.0,
+     4.0,
      "Catastrophic backstop distance (x ATR at entry)",
      minval = 1,
      group = grpExit,
      tooltip = "Last-resort net for a gap/flash move, fixed in ATR terms at entry rather than a " +
          "flat tick count so one rule works across gold/silver/MNQ/MES despite very different " +
-         "tick sizes and volatility.")
+         "tick sizes and volatility. Tightened from 6x to 4x 2026-08-21 after a real single-bar " +
+         "loss (June, -$1,600, inside an otherwise-chop month) came in far larger than every other " +
+         "loss that month — no exact bar size to calibrate against, so this is a deliberately " +
+         "conservative starting point pending real backtest numbers, not a measured value.")
 
 useRegimeFlipExit = input.bool(
      true,
@@ -716,6 +745,17 @@ priceInGapShort = high >= upperInner
 
 // ============================================================================
 // CHOP / TREND REGIME (higher timeframe, non-repainting)
+//
+// 2026-08-21 — replaced Choppiness-Index-as-gate with structure-breakout as
+// the primary signal. Measured effect of the Choppiness gate: ~3 trades/
+// month against ~9-12 real setups visible on the chart, without actually
+// separating the good months from the bad one — it was pure lagging-average
+// noise. Structure is a sharp, single event (price closes beyond the last
+// confirmed swing high/low on the regime TF) instead of a threshold on a
+// smoothed ratio, so it doesn't chronically starve entries the same way.
+//
+// Choppiness Index is kept below purely as an informational readout in the
+// regime table — it no longer gates anything.
 // ============================================================================
 
 f_choppiness(len) =>
@@ -725,25 +765,61 @@ f_choppiness(len) =>
 
     100 * math.log10(sumTR / (hh - ll)) / math.log10(len)
 
-f_regime(chopLen, atrLen, atrAvgLen, atrMult) =>
-    chopVal = f_choppiness(chopLen)
+// Tracks the last confirmed swing high/low on the regime TF. "Broken" means
+// a confirmed close traded beyond one of them — that's the trend trigger.
+// A broken state clears itself the moment price closes back on the other
+// side of the level it broke (failed breakout, reclaimed back into the old
+// range) rather than needing a separate expiry rule.
+
+f_regime(pivotLen, atrLen, atrAvgLen, atrMult) =>
+    ph = ta.pivothigh(high, pivotLen, pivotLen)
+    pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+    var float swingHigh = na
+    var float swingLow = na
+    var float breakLevel = na
+    var int breakDir = 0
+
+    if not na(ph)
+        swingHigh := ph
+    if not na(pl)
+        swingLow := pl
+
+    if breakDir == 0
+        if not na(swingHigh) and close > swingHigh
+            breakDir := 1
+            breakLevel := swingHigh
+        else if not na(swingLow) and close < swingLow
+            breakDir := -1
+            breakLevel := swingLow
+    else if breakDir == 1 and close < breakLevel
+        breakDir := 0
+    else if breakDir == -1 and close > breakLevel
+        breakDir := 0
+
     atrVal = ta.atr(atrLen)
     atrAvgVal = ta.sma(atrVal, atrAvgLen)
     atrExpanded = atrVal > atrAvgVal * atrMult
 
-    [chopVal, atrExpanded]
+    [breakDir, atrExpanded, swingHigh, swingLow]
 
-[chopHTF, atrExpandedHTF] = request.security(
+[structDirHTF, atrExpandedHTF, swingHighHTF, swingLowHTF] = request.security(
      syminfo.tickerid,
      regimeTF,
-     f_regime(chopLength, atrLength, atrAvgLength, atrExpansionMult),
+     f_regime(pivotLength, atrLength, atrAvgLength, atrExpansionMult),
      lookahead = barmerge.lookahead_off)
 
-// Chop = choppiness index high enough AND volatility isn't actively
-// expanding out of its own recent range (a fresh ATR breakout is treated as
-// trend forming even before the choppiness reading has caught up).
+chopHTF = request.security(
+     syminfo.tickerid,
+     regimeTF,
+     f_choppiness(chopLength),
+     lookahead = barmerge.lookahead_off)
 
-isChop = chopHTF >= chopThreshold and not atrExpandedHTF
+// Chop = no confirmed structure break, AND (if the co-trigger is enabled)
+// volatility isn't actively expanding out of its own recent range — a fast
+// ATR spike can flag trend before a pivot has had time to confirm.
+
+isChop = structDirHTF == 0 and (not useATRCoTrigger or not atrExpandedHTF)
 
 regimeJustFlippedToTrend = barstate.isconfirmed and
      not isChop and
@@ -1094,7 +1170,7 @@ plot(
 var table regimeTable = table.new(
      position.top_left,
      2,
-     2,
+     3,
      border_width = 1)
 
 if barstate.islast
@@ -1104,12 +1180,18 @@ if barstate.islast
          0,
          0,
          1,
-         1)
+         2)
 
     if showRegimeTable
 
         string regimeText = isChop ? "CHOP — TRADING ON" : "TREND — STANDING DOWN"
         color regimeColor = isChop ? colWin : colLoss
+
+        string structText = structDirHTF == 0 ?
+             "RANGE INTACT" :
+             structDirHTF == 1 ?
+             "BROKE UP" :
+             "BROKE DOWN"
 
         table.cell(
              regimeTable,
@@ -1133,7 +1215,7 @@ if barstate.islast
              regimeTable,
              0,
              1,
-             "CHOP " + str.tostring(chopHTF, "#.#"),
+             "STRUCTURE",
              text_color = color.silver,
              text_size = size.tiny)
 
@@ -1141,6 +1223,22 @@ if barstate.islast
              regimeTable,
              1,
              1,
+             structText,
+             text_color = structDirHTF == 0 ? colWin : colLoss,
+             text_size = size.tiny)
+
+        table.cell(
+             regimeTable,
+             0,
+             2,
+             "CHOP " + str.tostring(chopHTF, "#.#") + " (info)",
+             text_color = color.silver,
+             text_size = size.tiny)
+
+        table.cell(
+             regimeTable,
+             1,
+             2,
              atrExpandedHTF ? "ATR EXPANDING" : "ATR NORMAL",
              text_color = atrExpandedHTF ? colLoss : color.silver,
              text_size = size.tiny)

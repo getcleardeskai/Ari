@@ -335,11 +335,71 @@ each exit type, and both regime flips, meant to feed an execution bot for full a
 `bot/` webhook pattern as the trend strategy) — the bot side of this isn't built yet.
 
 **Open / needs empirical tuning once on a real chart:**
-- Choppiness threshold (default 50 — between the classic 38.2/61.8 reference points, untested).
 - ATR-expansion multiplier (default 1.3) and the structural-stop/catastrophic-stop ATR multipliers
-  (default 0.5x / 6x).
+  (default 0.5x / 4x).
 - Whether "Asia is very slow" needs a separate liquidity/illiquidity filter, or whether it's just
-  quiet-but-clean chop that the Choppiness Index already handles fine — not yet distinguished.
+  quiet-but-clean chop that the regime gate already handles fine — not yet distinguished.
+
+## 2026-08-21, same day — real monthly data, Choppiness Index dropped, backtest twin added
+
+Trader tested the above and reported it back: the Choppiness gate was producing ~3 trades/month
+against 9-12 real setups visible on the chart (starving good trades), and time-stop/structural-stop
+"felt useless" in that short live test — turned out to be because the test window likely never hit
+a violent single-bar event, not because the mechanisms don't work.
+
+**Real monthly MNQ P&L, original (pre-regime-filter) script, partial year** (trader's own numbers;
+an earlier claim of "12 months, zero profitable months" was retracted as fabricated — treat only
+this table as real):
+
+| Month | Regime (trader's label) | W/L | Net P&L |
+|---|---|---|---|
+| Aug | Chop | 9/10 | +$864 |
+| Jul | Chop | 7/10 | +$300 |
+| Mar | Chop | 7/10 | +$350 |
+| Feb | Chop (leaned one direction) | ? | -$100 |
+| Jun | Chop (violent, single giant bar) | 6/10 | **-$950** |
+| Apr | Trend (breakout up) | 8/10 | $0 |
+| May | Trend | 9/10 | -$25 |
+
+**What this actually shows:** 4 of 5 chop months solidly profitable, both trend months roughly flat
+(not disasters — contradicts the original "trend = the killer" framing this whole design started
+from), and the one clearly bad month (June) was a **single violent bar inside an otherwise-chop
+month**, not a trend month at all. Real edge lives in chop; trend mostly just isn't worth the screen
+time rather than being actively dangerous (at least in this sample); the actual tail risk is a
+violent single bar that no chop/trend classifier — Choppiness Index or structure-breakout — can
+prevent in advance, since the month still reads as chop on average right up until that bar. Trader
+could not produce the rest of the year's numbers or the exact size of the June bar (asked, not
+available) — decisions below made without full-year confirmation, flagged as such.
+
+**Changes made based on this, in `../../pinescript/mrc-regime-switch.pine`:**
+
+1. **Choppiness Index dropped as the entry gate**, replaced with **structure-breakout**: track the
+   last confirmed swing high/low on the regime timeframe, chop = structure intact (no confirmed
+   break), trend = a confirmed close beyond one of them. Self-clears back to chop if the break gets
+   reclaimed (price closes back on the other side of the broken level) rather than needing a
+   separate expiry window — same "failed breakout, back to range" logic that resolved the touch/
+   expiry bugs in the other mean-reversion script (`auto-reversion-strategy.pine`) above. An
+   ATR-expansion co-trigger (toggle-able, on by default) still stands down fast ahead of pivot
+   confirmation lag, for an obviously violent move. Choppiness Index itself is kept in the regime
+   table as an informational-only number — it no longer gates trades.
+2. **Catastrophic backstop tightened 6x -> 4x ATR** — June's loss was far larger than every other
+   loss that month, and there's no exact bar size to calibrate against, so this is a deliberately
+   conservative guess, not a measured value. Needs revisiting once real backtest numbers exist.
+3. **Time stop and structural stop kept as-is (30 min / outer band + 0.5x ATR buffer)** — no
+   evidence yet that they're wrong, just that the trader's short live test didn't happen to stress
+   them against the failure mode they exist for.
+
+**New file: `../../pinescript/mrc-regime-switch-backtest.pine`.** Hand-counted monthly recollection
+turned out to be unreliable to build decisions on — this is the same signal/regime/exit logic
+ported to a real `strategy()` with `strategy.entry()`/`strategy.close()`, so TradingView's own
+Strategy Tester produces exact numbers instead of memory. The indicator stays what the trader
+watches live (explicit preference, keeps the visual); the backtest twin exists purely to answer
+"what would this actually have done," and to get the full-year, exact-bar-size data this entry
+couldn't get from recollection alone.
+
+**Still open:** full-year net P&L (only 7 months available, informally), exact size of the June
+bar, whether trend really is this benign outside this one small sample, and every numeric threshold
+above — all pending a real run of the backtest twin.
 
 ## Reference examples (from chart screenshots, 2026-08-19)
 
