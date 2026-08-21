@@ -90,6 +90,14 @@ atrExpansionMult = input.float(
      minval = 1.0,
      group = grpRegime)
 
+gateEntriesByRegime = input.bool(
+     false,
+     "Require chop regime to allow new entries",
+     group = grpRegime,
+     tooltip = "OFF by default — run this first with the gate off to baseline the original " +
+         "MRC+QQE signal alone, then turn on and re-run to see what the regime gate actually " +
+         "does to the numbers, instead of assuming.")
+
 // ============================================================================
 // EXIT MANAGEMENT SETTINGS
 // ============================================================================
@@ -268,8 +276,8 @@ regimeJustFlippedToTrend = barstate.isconfirmed and not isChop and isChop[1]
 // SIGNALS (regime-gated)
 // ============================================================================
 
-qqeLong = maBelowOuter and priceInGapLong and isChop ? qqeLongRaw : na
-qqeShort = maAboveOuter and priceInGapShort and isChop ? qqeShortRaw : na
+qqeLong = maBelowOuter and priceInGapLong and (not gateEntriesByRegime or isChop) ? qqeLongRaw : na
+qqeShort = maAboveOuter and priceInGapShort and (not gateEntriesByRegime or isChop) ? qqeShortRaw : na
 
 longSignal = not na(qqeLong)
 shortSignal = not na(qqeShort)

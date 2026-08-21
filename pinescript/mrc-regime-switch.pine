@@ -221,6 +221,16 @@ atrExpansionMult = input.float(
      tooltip = "If current ATR exceeds its own average by this multiple, treat that as a " +
          "trend forming even before structure confirms it.")
 
+gateEntriesByRegime = input.bool(
+     false,
+     "Require chop regime to allow new entries",
+     group = grpRegime,
+     tooltip = "OFF by default (2026-08-21) — the regime gate isn't backtest-verified yet and " +
+         "was measured to starve entries down to ~zero in one form already. With this off, " +
+         "trades fire on the original MRC+QQE signal alone (same as before any regime work), " +
+         "and regime is still computed/shown for reference. Turn on once the backtest twin shows " +
+         "it actually helps instead of just filtering good trades out.")
+
 chopLength = input.int(
      14,
      "Choppiness Index length (display only, no longer gates trades)",
@@ -846,14 +856,14 @@ bgcolor(
 qqeLong =
      maBelowOuter and
      priceInGapLong and
-     isChop ?
+     (not gateEntriesByRegime or isChop) ?
      qqeLongRaw :
      na
 
 qqeShort =
      maAboveOuter and
      priceInGapShort and
-     isChop ?
+     (not gateEntriesByRegime or isChop) ?
      qqeShortRaw :
      na
 
