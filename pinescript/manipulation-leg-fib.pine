@@ -1,0 +1,128 @@
+//@version=5
+// ============================================================================
+// Manipulation Leg Fib
+//
+// Auto-detects "manipulation legs" and plots a fib retracement/extension
+// ladder across each one, using the trader's own Fib Retracement tool
+// settings (2026-08-25 screenshot).
+//
+// Concept (trader's description, 2026-08-25):
+//   External liquidity sits at the last swing high/low. When price sweeps
+//   through it and reverses, the swing point formed AT that sweep is the
+//   manipulation point. The fib is drawn from that swing point back to the
+//   swing point that preceded it (the one the sweeping leg actually ran
+//   from) — NOT the level that got swept.
+//     - Sweep to the downside ("bearish" leg, per trader's own wording —
+//       describes the leg's own direction, not the reversal it sets up):
+//       price takes out the prior swing low (sell-side liquidity), forms a
+//       new, lower swing low there, then reverses. Fib drawn low -> the
+//       swing high that preceded that down-leg.
+//     - Sweep to the upside ("bull" leg, mirrored): price takes out the
+//       prior swing high (buy-side liquidity), forms a new, higher swing
+//       high there, then reverses. Fib drawn high -> the swing low that
+//       preceded that up-leg.
+//   A confirmed swing pivot (ta.pivothigh/pivotlow — price reverses on both
+//   sides of it) doubles as the "price starts to reverse" confirmation, so
+//   no separate reversal check is needed: the sweep condition is simply
+//   "the new same-side pivot is beyond the previous one."
+//
+// Levels plotted — exact set from the trader's Fib Retracement tool dialog:
+// 1, 0, -1, -2, -2.5, -3.25, -3.5, -4, -4.5, -5. Anchor math is the same as
+// the (archived) midnight deviation method's resolved spec — see
+// ../knowledge/midnight-deviation-method.md — just re-anchored off any
+// manipulation leg instead of the 00:00 candle:
+//   level_price = anchor0 + (anchor1 - anchor0) * ratio
+// where anchor0 = the swing point formed by the sweep ("0", near/reference)
+// and anchor1 = the preceding swing point ("1", far anchor). Per that same
+// doc, levels 1..-2.5 are the "pullback" band and -3.25..-5 are the
+// "reversion" band (where the trader looks for the actual big move) — the
+// reversion band is drawn bolder by default.
+// ============================================================================
+indicator("Manipulation Leg Fib", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+grpDetect = "Detection"
+pivotLen       = input.int(5, "Swing pivot length (bars each side)", minval = 2, group = grpDetect)
+maxLegsPerSide = input.int(2, "Manipulation legs kept on chart (per direction)", minval = 1, maxval = 10, group = grpDetect)
+showBearish    = input.bool(true, "Show bearish legs (swept low -> preceding high)", group = grpDetect)
+showBullish    = input.bool(true, "Show bullish legs (swept high -> preceding low)", group = grpDetect)
+
+grpStyle = "Style"
+bearColor          = input.color(color.red, "Bearish leg color", group = grpStyle)
+bullColor          = input.color(color.teal, "Bullish leg color", group = grpStyle)
+highlightReversion = input.bool(true, "Bold the reversion band (-3.25..-5)", group = grpStyle)
+showLabels         = input.bool(true, "Show level labels", group = grpStyle)
+labelSize          = input.string(size.tiny, "Label size", options = [size.tiny, size.small, size.normal], group = grpStyle)
+
+// Exact level ladder, checked levels only (trader's dialog, 2026-08-25).
+var array<float> RATIOS = array.from(1.0, 0.0, -1.0, -2.0, -2.5, -3.25, -3.5, -4.0, -4.5, -5.0)
+REVERSION_CUTOFF = -3.25   // ratios <= this sit in the "reversion" band
+
+// ---------------------------------------------------------------------------
+// Drawing — one leg = array.size(RATIOS) lines + labels, appended to the
+// side's arrays; oldest leg is trimmed once maxLegsPerSide is exceeded.
+// Lines extend right indefinitely so they never need per-bar redraw.
+// ---------------------------------------------------------------------------
+var array<line>  bearLines  = array.new<line>()
+var array<label> bearLabels = array.new<label>()
+var array<line>  bullLines  = array.new<line>()
+var array<label> bullLabels = array.new<label>()
+
+f_drawLeg(lineArr, labelArr, float anchor0, int anchor0Bar, float anchor1, int anchor1Bar, color baseColor) =>
+    x1 = math.min(anchor0Bar, anchor1Bar)
+    x2 = math.max(anchor0Bar, anchor1Bar)
+    for i = 0 to array.size(RATIOS) - 1
+        ratio      = array.get(RATIOS, i)
+        lvlPrice   = anchor0 + (anchor1 - anchor0) * ratio
+        isAnchor   = ratio == 0.0 or ratio == 1.0
+        isRevers   = ratio <= REVERSION_CUTOFF
+        w          = isAnchor ? 2 : (isRevers and highlightReversion ? 2 : 1)
+        transp     = isAnchor ? 0 : (isRevers and highlightReversion ? 20 : 55)
+        col        = color.new(baseColor, transp)
+        ln = line.new(x1 = x1, y1 = lvlPrice, x2 = x2, y2 = lvlPrice, color = col, width = w, extend = extend.right)
+        array.push(lineArr, ln)
+        if showLabels
+            txt = str.tostring(ratio, "#.####") + "  " + str.tostring(lvlPrice, format.mintick)
+            lb = label.new(x = x2, y = lvlPrice, text = txt, style = label.style_label_left, color = color.new(baseColor, 80), textcolor = baseColor, size = labelSize)
+            array.push(labelArr, lb)
+
+f_trimLegs(lineArr, labelArr) =>
+    n = array.size(RATIOS)
+    if array.size(lineArr) > maxLegsPerSide * n
+        for i = 1 to n
+            line.delete(array.shift(lineArr))
+            label.delete(array.shift(labelArr))
+
+// ---------------------------------------------------------------------------
+// Swing tracking + sweep detection
+// ---------------------------------------------------------------------------
+var float lastSwingHigh    = na
+var float lastSwingLow     = na
+var int   lastSwingHighBar = na
+var int   lastSwingLowBar  = na
+
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+// Bearish leg: a new swing low forms lower than the prior swing low
+// (sell-side liquidity resting there just got swept) -> fib low -> the
+// swing high that preceded this down-leg.
+if not na(pl)
+    newLow    = pl
+    newLowBar = bar_index - pivotLen
+    if showBearish and not na(lastSwingLow) and not na(lastSwingHigh) and newLow < lastSwingLow and lastSwingHighBar < newLowBar
+        f_drawLeg(bearLines, bearLabels, newLow, newLowBar, lastSwingHigh, lastSwingHighBar, bearColor)
+        f_trimLegs(bearLines, bearLabels)
+    lastSwingLow    := newLow
+    lastSwingLowBar := newLowBar
+
+// Bullish leg: a new swing high forms higher than the prior swing high
+// (buy-side liquidity just got swept) -> fib high -> the swing low that
+// preceded this up-leg.
+if not na(ph)
+    newHigh    = ph
+    newHighBar = bar_index - pivotLen
+    if showBullish and not na(lastSwingHigh) and not na(lastSwingLow) and newHigh > lastSwingHigh and lastSwingLowBar < newHighBar
+        f_drawLeg(bullLines, bullLabels, newHigh, newHighBar, lastSwingLow, lastSwingLowBar, bullColor)
+        f_trimLegs(bullLines, bullLabels)
+    lastSwingHigh    := newHigh
+    lastSwingHighBar := newHighBar

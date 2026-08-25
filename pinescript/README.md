@@ -2,6 +2,32 @@
 
 Strategies/indicators implementing the model from `../knowledge/automation-architecture.md`.
 
+## `manipulation-leg-fib.pine` — new, 2026-08-25
+
+A pure visualization **indicator**: auto-detects "manipulation legs" — the leg from a swing point
+formed by an external liquidity sweep back to the swing point that preceded it — and plots a fib
+retracement/extension ladder across each one, using the trader's own Fib Retracement tool settings
+(screenshot, 2026-08-25).
+
+**Detection:** a confirmed swing pivot (`ta.pivothigh`/`ta.pivotlow`, so the reversal confirmation
+is built in) that goes beyond the previous same-side swing point counts as sweeping the external
+liquidity resting there. A new, lower swing low than the prior swing low = a bearish leg (swept
+low), fib drawn from that low to the swing high that preceded the down-move. A new, higher swing
+high than the prior swing high = a bullish leg (swept high), fib drawn from that high to the swing
+low that preceded the up-move. Mirrors the anchor math resolved for the (archived) midnight
+deviation method — see `../knowledge/midnight-deviation-method.md` — just re-anchored off any
+manipulation leg instead of the 00:00 candle: `level_price = anchor0 + (anchor1 - anchor0) * ratio`,
+anchor0 = the swept swing point, anchor1 = the swing point before it.
+
+**Levels plotted** (checked levels from the trader's dialog): `1, 0, -1, -2, -2.5, -3.25, -3.5, -4,
+-4.5, -5`. Per the midnight-deviation doc's level notes, 1..-2.5 reads as the "pullback" band and
+-3.25..-5 as the "reversion" band (bolded by default, toggle in Style).
+
+**How to use it:** TradingView → open a chart → Pine Editor → paste this file's contents → Add to
+Chart. Adjust "Swing pivot length" to match how sensitive/major the swings should be. Hand-written,
+not yet run through TradingView's compiler — send the exact error text if it throws one on first
+load.
+
 ## `auto-reversion-strategy.pine` — current focus
 
 Current focus (2026-08-19) — the mean-reversion half of the two-strategy plan (see
